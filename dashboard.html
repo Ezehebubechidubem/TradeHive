@@ -1,79 +1,693 @@
-// pointer swipe
-    let startX=null, curX=0;
-    carousel.addEventListener('pointerdown', (ev)=>{ startX = ev.clientX; carousel.style.transition='none'; clearInterval(auto); });
-    carousel.addEventListener('pointermove', (ev)=>{ if(startX===null) return; curX = ev.clientX - startX; carousel.style.transform = `translateX(calc(-${carousel.dataset.index*100}% + ${curX}px))`; });
-    carousel.addEventListener('pointerup', ()=>{ if(startX===null) return; carousel.style.transition=''; if(Math.abs(curX)>50){ const idx=parseInt(carousel.dataset.index||0); const next = curX<0 ? Math.min(idx+1, prod.images.length-1) : Math.max(idx-1,0); carousel.dataset.index = next; carousel.style.transform = `translateX(-${next*100}%)`; dots.querySelectorAll('.dot').forEach(d=>d.classList.remove('active')); dots.querySelectorAll('.dot')[next].classList.add('active'); } else { const idx=parseInt(carousel.dataset.index||0); carousel.style.transform = `translateX(-${idx*100}%)`; } startX=null; curX=0; auto = setInterval(()=> { const idx=parseInt(carousel.dataset.index||0); const next=(idx+1)%prod.images.length; carousel.style.transform=`translateX(-${next*100}%)`; carousel.dataset.index=next; dots.querySelectorAll('.dot').forEach(d=>d.classList.remove('active')); dots.querySelectorAll('.dot')[next].classList.add('active'); },3000); });
-
-    // click to zoom (open modal)
-    carousel.addEventListener('click', ()=> openZoom(prod.images, parseInt(carousel.dataset.index||0), prod));
-
-    // qty and total update
-    const qty = card.querySelector('.qty'), totalEl = card.querySelector('.total');
-    qty.addEventListener('input', ()=>{ let v=parseInt(qty.value||1); if(v<1) v=1; if(v>prod.quantity) v=prod.quantity; qty.value=v; totalEl.textContent = formatN(v*prod.price_per); });
-
-    // add to cart
-    card.querySelector('.add').addEventListener('click', ()=> addToCart(prod, parseInt(qty.value||1)));
-
-    // view button - open zoom with details
-    card.querySelector('.view').addEventListener('click', ()=> openZoom(prod.images, parseInt(carousel.dataset.index||0), prod));
-  });
-}
-
-/* -------------------------
-  Zoom modal
-   ------------------------- */
-const zoomBackdrop = $('#zoomBackdrop'), zoomContent = $('#zoomContent');
-function openZoom(images, idx=0, meta=null){
-  zoomContent.innerHTML = '';
-  const wrapper = document.createElement('div');
-  const img = document.createElement('img'); img.src = images[idx]; img.style.width='100%'; img.style.height='auto'; img.style.objectFit='contain';
-  wrapper.appendChild(img);
-  if(meta){
-    const info = document.createElement('div'); info.style.color= 'var(--light)'; info.style.padding='10px 0'; info.innerHTML = `<h3 style="margin:0 0 6px 0">${meta.title}</h3><div style="color:var(--muted)">${meta.desc}</div><div style="margin-top:8px;font-weight:800">${formatN(meta.price_per)} • ${meta.location}</div>`;
-    zoomContent.appendChild(info);
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>TradeHive — UI (Cart enabled)</title>
+<style>
+  :root{
+    --white: #ffffff;
+    --page-bg: #ffffff; /* user requested white background */
+    --card: #f8fafb;
+    --gold1: #FFB703;
+    --gold2: #F59E0B;
+    --muted: #6b7280;
+    --text: #0b1220;
+    --shadow: rgba(2,6,23,0.08);
+    --online: #08a039;
+    --offline: #9aa0a6;
   }
-  zoomContent.appendChild(wrapper);
-  zoomBackdrop.style.display='flex'; zoomBackdrop.setAttribute('aria-hidden','false');
+  *{box-sizing:border-box}
+  html,body{height:100%; margin:0; font-family:Inter, Roboto, Arial, sans-serif; background:var(--page-bg); color:var(--text); -webkit-font-smoothing:antialiased;}
+  a{color:inherit; text-decoration:none}
+
+  /* Top header */
+  .top {
+    max-width:1120px; margin:12px auto; padding:10px 14px; display:flex; gap:12px; align-items:center; justify-content:space-between;
+  }
+  .top-left { display:flex; gap:10px; align-items:center; }
+  .hamb { width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(12,12,12,0.06); background:#fff; cursor:pointer; box-shadow:0 6px 12px var(--shadow); }
+  .logo { height:64px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .logo img{ height:56px; width:auto; display:block; object-fit:contain; }
+
+  .top-right { display:flex; gap:10px; align-items:center; }
+  .icon { width:44px;height:44px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;border:1px solid rgba(12,12,12,0.06); box-shadow:0 6px 12px var(--shadow); cursor:pointer; }
+  .cart-btn{ display:inline-flex; gap:8px; align-items:center; background: linear-gradient(180deg,var(--gold1),var(--gold2)); color:#071014; padding:8px 12px; border-radius:10px; border:2px solid #0b0b0b; font-weight:800; cursor:pointer; }
+  .cart-count{ position:relative; font-weight:900; margin-left:6px; padding:2px 6px; background:#071014; color:var(--gold1); border-radius:999px; font-size:12px; }
+
+  /* Side menu (drawer) */
+  .drawer-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,0.25); display:none; z-index:1200; }
+  .drawer{ position:fixed; left:0; top:0; bottom:0; width:320px; background:var(--white); padding:18px; box-shadow: 12px 0 30px rgba(0,0,0,0.12); transform:translateX(-112%); transition:transform .28s ease; z-index:1250; overflow:auto; }
+  .drawer.open{ transform:translateX(0); }
+  .drawer h3{ margin:0 0 8px 0; font-size:18px; color:var(--text); }
+  .drawer-close {
+    position:absolute; right:10px; top:10px; width:30px; height:30px; border-radius:6px; background:#000; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:900; font-size:14px; border:0;
+  }
+  .profile-row{ display:flex; gap:12px; align-items:center; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid rgba(12,12,12,0.06); }
+  .avatar-wrap{ position:relative; width:84px; height:84px; border-radius:12px; display:flex; align-items:center; justify-content:center; background:#fff; border:4px solid var(--offline); transition:border-color .18s; }
+  .avatar-wrap.online{ border-color: var(--online); box-shadow: 0 8px 20px rgba(8,160,57,0.12); }
+  .avatar { width:72px; height:72px; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#fff,#f3f3f3); }
+  .avatar svg{ width:42px; height:42px; opacity:0.85; }
+  .profile-info{ flex:1 }
+  .profile-info .name{ font-weight:800; color:var(--text); font-size:16px }
+  .profile-info .sub{ font-size:13px; color:var(--muted); margin-top:4px }
+
+  /* menu links list */
+  .menu-list{ margin-top:14px; }
+  .menu-item{ display:flex; align-items:center; gap:10px; padding:12px 8px; border-bottom:1px solid rgba(12,12,12,0.06); cursor:pointer; color:var(--text); }
+  .menu-item:last-child{ border-bottom:0 }
+  .menu-item .mi-icon{ width:36px; height:36px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:linear-gradient(180deg,#fff,#fbfbfb); border:1px solid rgba(12,12,12,0.04); }
+  .menu-item strong{ font-weight:800 }
+
+  /* status toggle inline */
+  .status-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 8px; border-bottom:1px solid rgba(12,12,12,0.06) }
+  .switch { position:relative; width:52px; height:30px; display:inline-block; }
+  .switch input{ display:none; }
+  .slider{ position:absolute; inset:0; background:#ddd; border-radius:30px; transition:.22s; }
+  .slider:before{ content:''; position:absolute; left:4px; top:4px; width:22px; height:22px; background:#fff; border-radius:50%; transition:.22s; box-shadow:0 2px 6px rgba(0,0,0,0.12); }
+  .switch input:checked + .slider{ background:linear-gradient(90deg,var(--gold1),var(--gold2)); }
+  .switch input:checked + .slider:before{ transform:translateX(22px); }
+
+  /* main content / products area */
+  .content { max-width:1120px; margin:18px auto; padding:10px 14px; }
+  .controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; }
+  .cat { background:#fff; border:1px solid rgba(12,12,12,0.06); padding:8px 12px; border-radius:999px; font-weight:800; cursor:pointer; }
+  .cat.active{ background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; box-shadow: 0 6px 20px rgba(0,0,0,0.06); transform:translateY(-2px) }
+
+  .subcats{ margin:10px 0 18px; display:flex; gap:8px; overflow:auto; padding-bottom:6px; }
+  .subcat { background:#fff; border:1px solid rgba(12,12,12,0.06); padding:8px 10px; border-radius:999px; font-weight:700; color:var(--muted); cursor:pointer }
+  .subcat.active{ background:#fef7e6; color:var(--text); border:1px solid rgba(255,183,3,0.12); }
+
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px; }
+  .product { background:#fff; border:1px solid rgba(12,12,12,0.06); border-radius:12px; overflow:hidden; box-shadow:0 8px 22px rgba(2,6,23,0.04); display:flex; flex-direction:column; }
+  .media { background:#f7f7f7; height:190px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden }
+  .media img{ width:100%; height:100%; object-fit:cover }
+  .live-pill { position:absolute; top:10px; left:10px; background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; padding:6px 10px; border-radius:999px; font-weight:800; display:inline-flex; gap:8px; align-items:center; box-shadow:0 8px 20px rgba(0,0,0,0.06) }
+  .live-dot{ width:9px; height:9px; border-radius:50%; background:var(--online); box-shadow:0 0 8px rgba(8,160,57,0.18); animation:blnk 1.2s infinite }
+  @keyframes blnk {0%{opacity:1}50%{opacity:0.3}100%{opacity:1}}
+
+  .body { padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .p-title{ font-weight:900; color:var(--text) }
+  .p-desc{ color:var(--muted); font-size:13px; min-height:36px }
+  .meta { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px }
+  .price { color:var(--gold1); font-weight:900 }
+  .loc { color:var(--muted); font-weight:700; font-size:13px }
+
+  .qty-row{ margin-top:10px; display:flex; gap:8px; align-items:center; }
+  .qty { width:80px; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06); background:#fff; text-align:center; font-weight:700 }
+
+  .actions { display:flex; gap:8px; margin-top:12px }
+  .btn { flex:1; padding:10px 12px; border-radius:10px; font-weight:800; border:0; cursor:pointer }
+  .btn.gold { background: linear-gradient(180deg,var(--gold1),var(--gold2)); color:#071014; border:2px solid #0b0b0b; box-shadow:0 8px 26px rgba(0,0,0,0.06) }
+  .btn.ghost { background:#fff; border:1px solid rgba(12,12,12,0.06) }
+
+  /* add-to-cart popup */
+  .confirm-backdrop{ position:fixed; inset:0; display:none; background:rgba(0,0,0,0.45); align-items:center; justify-content:center; z-index:1500 }
+  .confirm { background:#fff; width:94%; max-width:440px; padding:18px; border-radius:12px; box-shadow:0 18px 50px rgba(0,0,0,0.18) }
+  .confirm h4{ margin:0 0 8px 0; color:var(--text) }
+  .confirm .muted{ color:var(--muted); font-size:14px; margin-bottom:12px }
+  .confirm .row{ display:flex; gap:8px; }
+
+  /* cart modal */
+  .cart-modal{ position:fixed; right:18px; top:84px; width:340px; max-height:70vh; overflow:auto; background:#fff; border-radius:12px; padding:12px; box-shadow:0 20px 60px rgba(0,0,0,0.8); border:1px solid rgba(12,12,12,0.06); display:none; z-index:1600; }
+  .cart-item{ display:flex; gap:8px; align-items:center; padding:8px 6px; border-bottom:1px dashed rgba(12,12,12,0.06) }
+  .cart-item img{ width:56px; height:56px; object-fit:cover; border-radius:8px }
+  .cart-footer{ display:flex; justify-content:space-between; align-items:center; margin-top:8px }
+
+  /* settings modal */
+  .modal-backdrop{ position:fixed; inset:0; display:none; background:rgba(0,0,0,0.35); align-items:center; justify-content:center; z-index:1600 }
+  .modal{ background:#fff; width:94%; max-width:680px; border-radius:12px; padding:18px; box-shadow:0 18px 60px rgba(0,0,0,0.18) }
+  .setting-row{ display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px dashed rgba(12,12,12,0.04) }
+  .setting-row:last-child{ border-bottom:0 }
+
+  /* toast */
+  .toast { position:fixed; right:18px; bottom:18px; background:#071014; color:var(--gold1); padding:10px 12px; border-radius:8px; display:none; z-index:2200; font-weight:800 }
+
+  /* dark mode */
+  body.dark { --page-bg:#061017; --white:#071018; --card:#0b1720; --text:#e6eef8; --muted:#9aa0a6; --shadow: rgba(0,0,0,0.4); }
+  body.dark .drawer { background:#071018; color:var(--text) }
+  body.dark .profile-row, body.dark .menu-item { border-bottom-color: rgba(255,255,255,0.03) }
+
+  @media(max-width:720px){
+    .drawer{ width:100%; }
+    .top{ padding:8px 12px; margin:8px }
+    .logo img{ height:48px }
+    .product .media{ height:170px }
+    .cart-modal{ right:8px; left:8px; width:auto }
+  }
+</style>
+</head>
+<body>
+
+  <!-- top header -->
+  <div class="top">
+    <div class="top-left">
+      <div class="hamb" id="hambBtn" title="Menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="#0b1220" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </div>
+      <div class="logo" aria-label="TradeHive logo">
+        <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive">
+      </div>
+    </div>
+
+    <div class="top-right">
+      <div class="icon" id="profileIcon" title="Profile">
+        <div id="miniAvatar" style="width:34px;height:34px;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#071014" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+
+      <!-- top cart is ENABLED and clickable -->
+      <div class="cart-btn" id="openCartTop" title="Open Cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 6h15l-1.5 9h-11L6 6zM6 6L4 2H2" stroke="#071014" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div>Cart <span class="cart-count" id="cartCount">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- drawer/backdrop -->
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" role="navigation">
+    <!-- small black close button top-right inside drawer -->
+    <button class="drawer-close" id="drawerClose" title="Close">❌</button>
+
+    <div class="profile-row">
+      <div id="avatarWrap" class="avatar-wrap">
+        <div class="avatar" id="avatarBox">
+          <svg id="avatarSvg" viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="profile-info">
+        <div class="name" id="profileName">Guest</div>
+        <div class="sub" id="profileEmail">Not signed in</div>
+      </div>
+    </div>
+
+    <nav class="menu-list" aria-label="Main menu">
+      <a class="menu-item" href="#" id="linkProfile">
+        <div class="mi-icon">👤</div><div><strong>Profile</strong><div style="font-size:12px;color:var(--muted)">View and edit profile</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkSell">
+        <div class="mi-icon">➕</div><div><strong>Sell Marketplace</strong><div style="font-size:12px;color:var(--muted)">Post new ad</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBank">
+        <div class="mi-icon">🏦</div><div><strong>Bank Account</strong><div style="font-size:12px;color:var(--muted)">Add payout details</div></div>
+      </a>
+
+      <!-- My Cart in drawer IS clickable and opens the cart modal -->
+      <a class="menu-item" href="#" id="linkCart">
+        <div class="mi-icon">🛒</div><div><strong>My Cart</strong><div style="font-size:12px;color:var(--muted)">View cart & checkout</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkAds">
+        <div class="mi-icon">📦</div><div><strong>My Ads</strong><div style="font-size:12px;color:var(--muted)">Active & expired ads</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBoard">
+        <div class="mi-icon">🏆</div><div><strong>Leaderboard</strong><div style="font-size:12px;color:var(--muted)">Top sellers & buyers</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkKyc">
+        <div class="mi-icon">🔐</div><div><strong>KYC</strong><div style="font-size:12px;color:var(--muted)">Verify your identity</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="openSettings">
+        <div class="mi-icon">⚙️</div><div><strong>Settings</strong><div style="font-size:12px;color:var(--muted)">Theme, account settings</div></div>
+      </a>
+
+      <div class="status-row">
+        <div style="font-weight:800">Status</div>
+        <label class="switch" title="Toggle online / offline">
+          <input id="statusSwitch" type="checkbox"><span class="slider"></span>
+        </label>
+      </div>
+
+      <a class="menu-item" href="#" id="linkServices"><div class="mi-icon">🛠</div><div><strong>Services</strong><div style="font-size:12px;color:var(--muted)">Our services</div></div></a>
+      <a class="menu-item" href="#" id="linkContact"><div class="mi-icon">✉️</div><div><strong>Contact us</strong><div style="font-size:12px;color:var(--muted)">Get help & support</div></div></a>
+      <a class="menu-item" href="#" id="linkLogout"><div class="mi-icon">🚪</div><div><strong>Logout</strong><div style="font-size:12px;color:var(--muted)">Sign out</div></div></a>
+    </nav>
+  </aside>
+
+  <!-- main content area -->
+  <main class="content">
+    <div class="controls" aria-label="Category selection">
+      <div class="cat active" data-cat="All">All</div>
+      <div class="cat" data-cat="Foods">Foods</div>
+      <div class="cat" data-cat="Clothing">Clothing</div>
+      <div class="cat" data-cat="Electronics & Gadgets">Electronics & Gadgets</div>
+    </div>
+
+    <div class="subcats" id="subcats">
+      <!-- subcats will be injected -->
+    </div>
+
+    <section class="grid" id="products" aria-live="polite">
+      <!-- products injected by JS -->
+    </section>
+  </main>
+
+  <!-- Add-to-cart confirm popup -->
+  <div class="confirm-backdrop" id="confirmBackdrop">
+    <div class="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h4 id="confirmTitle">Proceed to payment?</h4>
+      <div class="muted" id="confirmText">You added <strong id="confirmItem">1 × Item</strong> to cart. Would you like to proceed to payment or keep the order in your cart?</div>
+      <div style="height:12px"></div>
+      <div class="row">
+        <button class="btn gold" id="confirmProceed">Proceed</button>
+        <button class="btn ghost" id="confirmCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- cart modal (openable from drawer and top cart) -->
+  <div class="cart-modal" id="cartModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <h3 style="margin:0 0 8px 0">My Cart</h3>
+    <div id="cartList"></div>
+    <div class="cart-footer" style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-weight:900">Total: <span id="cartTotal">₦0</span></div>
+      <div style="display:flex; gap:8px">
+        <button class="btn ghost" id="closeCart">Close</button>
+        <button class="btn gold" id="checkoutNow">Checkout</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings modal -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h3 id="settingsTitle">Settings</h3>
+
+      <div style="margin-top:12px">
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Dark / Light</div>
+            <div style="color:var(--muted); font-size:13px">Toggle theme</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="themeSwitch"><span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Change password</div>
+            <div style="color:var(--muted); font-size:13px">Update your password</div>
+          </div>
+          <button class="btn ghost" id="openChangePassword">Open</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Account details</div>
+            <div style="color:var(--muted); font-size:13px">Update name, phone, location</div>
+          </div>
+          <button class="btn ghost" id="openAccountDetails">Open</button>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn ghost" id="closeSettings">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- change password modal (simple inline) -->
+  <div class="modal-backdrop" id="pwBackdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Change password</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Old password</label>
+        <input id="oldPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">New password</label>
+        <input id="newPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closePw">Cancel</button>
+          <button class="btn gold" id="savePw">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- account details modal -->
+  <div class="modal-backdrop" id="accBackdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Account details</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Full name</label>
+        <input id="accName" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">Phone</label>
+        <input id="accPhone" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">City / Town</label>
+        <input id="accCity" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closeAcc">Cancel</button>
+          <button class="btn gold" id="saveAcc">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast">Saved</div>
+
+<script>
+/* ---------------------------
+  Mock products (for demo)
+   --------------------------- */
+const PRODUCTS = [
+  { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
+      'https://i.postimg.cc/0NQ8tqzq/meatpie1.jpg',
+      'https://i.postimg.cc/7Y7WFJ9g/meatpie2.jpg'
+    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food'},
+  { id:'p2', title:'Assorted Pastry Box', desc:'Delicious pastry box for events.', images:[
+      'https://i.postimg.cc/2kH6h5s9/pastry2.jpg',
+      'https://i.postimg.cc/3x3z0XgY/pastry1.jpg'
+    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry'},
+  { id:'p3', title:'Designer Ankara Shirt (XL)', desc:'Handmade Ankara shirt — top quality fabric.', images:[
+      'https://i.postimg.cc/0jVj2GdB/cloth1.jpg',
+      'https://i.postimg.cc/3x0Xv6bX/cloth2.jpg'
+    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men'},
+  { id:'p4', title:'Women Floral Dress', desc:'Summer women dress, size M.', images:[
+      'https://i.postimg.cc/8kz6Yb4m/women1.jpg',
+      'https://i.postimg.cc/C12v1Kq2/women2.jpg'
+    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women'},
+  { id:'p5', title:'Portable Radio', desc:'Compact radio with excellent sound quality.', images:[
+      'https://i.postimg.cc/1z2Pzq5s/radio1.jpg',
+      'https://i.postimg.cc/63N4QxgG/radio2.jpg'
+    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio'},
+  { id:'p6', title:'Table Fan 3-speed', desc:'Durable table fan for home.', images:[
+      'https://i.postimg.cc/N0z0s6cM/fan1.jpg',
+      'https://i.postimg.cc/Vv6L9wDq/fan2.jpg'
+    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans'}
+];
+
+/* ---------------------------
+  State & storage helpers
+   --------------------------- */
+const CART_KEY = 'tradehive_cart_v3';
+const USER_KEY = 'tradehive_user_v1';
+function readCart(){ try{return JSON.parse(localStorage.getItem(CART_KEY) || '[]')}catch(e){return []} }
+function writeCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); renderCart(); }
+function readUser(){ try{return JSON.parse(localStorage.getItem(USER_KEY) || 'null')}catch(e){return null} }
+function writeUser(u){ localStorage.setItem(USER_KEY, JSON.stringify(u)); }
+
+/* ---------------------------
+  Drawer open/close
+   --------------------------- */
+const drawer = document.getElementById('drawer');
+const backdrop = document.getElementById('drawerBackdrop');
+const drawerCloseBtn = document.getElementById('drawerClose');
+document.getElementById('hambBtn').addEventListener('click', ()=>{ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); });
+backdrop.addEventListener('click', ()=>{ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); });
+drawerCloseBtn.addEventListener('click', ()=>{ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); });
+
+/* ---------------------------
+  Avatar & profile display
+   --------------------------- */
+function setAvatarFromUser(){
+  const u = readUser();
+  const nameEl = document.getElementById('profileName');
+  const emailEl = document.getElementById('profileEmail');
+  const avatarBox = document.getElementById('avatarBox');
+  const avatarWrap = document.getElementById('avatarWrap');
+  const mini = document.getElementById('miniAvatar');
+
+  if(u){
+    nameEl.textContent = u.fullname || u.username || 'User';
+    emailEl.textContent = u.phone || u.email || 'Member';
+    if(u.avatarUrl){
+      avatarBox.innerHTML = `<img src="${u.avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover">`;
+      mini.innerHTML = `<img src="${u.avatarUrl}" alt="mini" style="width:34px;height:34px;object-fit:cover">`;
+    } else {
+      const initials = (u.fullname || u.username || 'G').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
+      avatarBox.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:linear-gradient(180deg,#fff,#faf7ef); width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+      mini.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:#fff; width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+    }
+  } else {
+    nameEl.textContent = 'Guest';
+    emailEl.textContent = 'Not signed in';
+    avatarBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="42" height="42"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+    mini.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+  }
+
+  // online status ring
+  const online = (u && u.online) ? true : false;
+  if(online){ avatarWrap.classList.add('online'); } else { avatarWrap.classList.remove('online'); }
+
 }
-zoomBackdrop.addEventListener('click', ()=> { zoomBackdrop.style.display='none'; zoomBackdrop.setAttribute('aria-hidden','true'); zoomContent.innerHTML=''; });
+setAvatarFromUser();
 
-/* -------------------------
-  Cart modal toggle & checkout
-   ------------------------- */
-$('#openCart').addEventListener('click', ()=> {
-  const m = $('#cartModal'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; renderCartUI();
+/* ---------------------------
+  Status switch to toggle online/offline
+   --------------------------- */
+const statusSwitch = document.getElementById('statusSwitch');
+const user = readUser();
+statusSwitch.checked = (user && user.online) ? true : false;
+statusSwitch.addEventListener('change', ()=>{
+  let u = readUser() || { username:'guest' };
+  u.online = statusSwitch.checked;
+  writeUser(u);
+  setAvatarFromUser();
+  renderProducts(); // optional
+  showToast(u.online ? 'You are online' : 'You are offline');
 });
-$('#checkoutBtn').addEventListener('click', ()=> { const c = readCart(); if(c.length===0) { showToast('Cart is empty'); return; } showToast('Checkout: integrate escrow & payment backend'); });
 
-/* -------------------------
-  Initialize UI
-   ------------------------- */
-buildSubtabs('All'); renderProducts(); renderCartUI();
+/* ---------------------------
+  Settings modal handlers
+   --------------------------- */
+const modalBackdrop = document.getElementById('modalBackdrop');
+document.getElementById('openSettings').addEventListener('click', (e)=>{
+  e.preventDefault();
+  modalBackdrop.style.display = 'flex';
+  document.getElementById('themeSwitch').checked = document.body.classList.contains('dark');
+});
+document.getElementById('closeSettings').addEventListener('click', ()=> modalBackdrop.style.display='none');
 
-/* -------------------------
-  Subtabs builder function (reusable definition)
-   ------------------------- */
-function buildSubtabs(mainKey) {
-  subTabRoot.innerHTML = '';
-  const entry = MAIN_CATS.find(m=>m.key===mainKey);
-  if(!entry || entry.subs.length===0) { subTabRoot.setAttribute('aria-hidden','true'); return; }
-  subTabRoot.setAttribute('aria-hidden','false');
-  entry.subs.forEach((s,i)=>{
-    const el = document.createElement('div');
-    el.className = 'subtab' + (i===0 ? ' active' : '');
-    el.textContent = s;
-    el.dataset.sub = s;
-    el.addEventListener('click', ()=> { $all('.subtab').forEach(x=>x.classList.remove('active')); el.classList.add('active'); renderProducts(); });
-    subTabRoot.appendChild(el);
+document.getElementById('themeSwitch').addEventListener('change', (e)=>{
+  if(e.target.checked){ document.body.classList.add('dark'); showToast('Dark mode enabled'); } else { document.body.classList.remove('dark'); showToast('Light mode enabled'); }
+});
+
+/* Change password modal */
+document.getElementById('openChangePassword').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='flex'; });
+document.getElementById('closePw').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='none'; });
+document.getElementById('savePw').addEventListener('click', ()=>{
+  document.getElementById('pwBackdrop').style.display='none';
+  showToast('Password updated (demo)');
+});
+
+/* Account details modal */
+document.getElementById('openAccountDetails').addEventListener('click', ()=>{
+  const u = readUser() || {};
+  document.getElementById('accName').value = u.fullname || '';
+  document.getElementById('accPhone').value = u.phone || '';
+  document.getElementById('accCity').value = u.city || '';
+  document.getElementById('accBackdrop').style.display='flex';
+});
+document.getElementById('closeAcc').addEventListener('click', ()=> document.getElementById('accBackdrop').style.display='none');
+document.getElementById('saveAcc').addEventListener('click', ()=>{
+  const u = readUser() || {};
+  u.fullname = document.getElementById('accName').value.trim();
+  u.phone = document.getElementById('accPhone').value.trim();
+  u.city = document.getElementById('accCity').value.trim();
+  writeUser(u);
+  setAvatarFromUser();
+  document.getElementById('accBackdrop').style.display='none';
+  showToast('Account details saved (demo)');
+});
+
+/* ---------------------------
+  Build subcategories per main category
+   --------------------------- */
+const SUBS = {
+  'All': ['All'],
+  'Foods': ['All','Food','Pastry','Items'],
+  'Clothing': ['All','Men','Women','Children','Shoes','Jewellery'],
+  'Electronics & Gadgets': ['All','Phones','Laptop','MP3','iPad','Watch','Fans','Others']
+};
+const catEls = document.querySelectorAll('.cat');
+const subRoot = document.getElementById('subcats');
+function buildSubcats(active){
+  subRoot.innerHTML = '';
+  const subs = SUBS[active] || ['All'];
+  subs.forEach((s,i)=>{
+    const d = document.createElement('div'); d.className='subcat' + (i===0?' active':''); d.textContent=s; d.dataset.sub=s;
+    d.addEventListener('click', ()=>{ document.querySelectorAll('.subcat').forEach(x=>x.classList.remove('active')); d.classList.add('active'); renderProducts(); });
+    subRoot.appendChild(d);
   });
 }
+catEls.forEach(c=> c.addEventListener('click', ()=>{
+  catEls.forEach(x=>x.classList.remove('active'));
+  c.classList.add('active');
+  buildSubcats(c.dataset.cat);
+  renderProducts();
+}));
+buildSubcats('All');
 
-/* ---------- Accessibility / Escape ---------- */
-document.addEventListener('keydown', (e)=> {
-  if(e.key === 'Escape'){ $('#cartModal').style.display='none'; zoomBackdrop.style.display='none'; zoomBackdrop.setAttribute('aria-hidden','true'); }
+/* ---------------------------
+  Products rendering & cart
+   --------------------------- */
+const productsRoot = document.getElementById('products');
+function renderProducts(){
+  productsRoot.innerHTML = '';
+  const activeCat = document.querySelector('.cat.active').dataset.cat;
+  const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
+
+  const list = PRODUCTS.filter(p=>{
+    if(activeCat !== 'All' && p.category !== activeCat) return false;
+    if(activeSub !== 'All' && p.sub !== activeSub) return false;
+    return true;
+  });
+
+  list.forEach(p=>{
+    const el = document.createElement('article'); el.className='product';
+    el.innerHTML = `
+      <div class="media">
+        <img src="${p.images[0]}" alt="">
+        ${p.live && p.seller_online ? `<div class="live-pill"><span class="live-dot"></span> LIVE</div>` : `<div class="live-pill" style="background:#f2f2f2;color:#333">Offline</div>`}
+      </div>
+      <div class="body">
+        <div class="p-title">${p.title}</div>
+        <div class="p-desc">${p.desc}</div>
+        <div class="meta"><div class="price">₦${Number(p.price).toLocaleString()}</div><div class="loc">${p.loc} • ${p.qty} pcs</div></div>
+        <div class="qty-row"><label style="font-weight:700">Qty</label><input class="qty" type="number" min="1" max="${p.qty}" value="1" /></div>
+        <div class="actions"><button class="btn gold addBtn">Add to cart</button><button class="btn ghost viewBtn">View</button></div>
+      </div>
+    `;
+    productsRoot.appendChild(el);
+
+    // handlers
+    el.querySelector('.addBtn').addEventListener('click', ()=>{
+      const q = parseInt(el.querySelector('.qty').value || '1');
+      addToCart(p, q, true); // show popup per request
+    });
+    el.querySelector('.viewBtn').addEventListener('click', ()=>{ alert('Open product detail (demo).'); });
+  });
+}
+renderProducts();
+
+/* cart functions */
+function addToCart(product, qty, showConfirm=false){
+  // add to storage
+  const cart = readCart();
+  const found = cart.find(i=>i.id===product.id);
+  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
+  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
+  writeCart(cart);
+
+  // show confirm popup if requested
+  if(showConfirm){
+    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
+    document.getElementById('confirmBackdrop').style.display='flex';
+  } else {
+    showToast('Added to cart');
+  }
+}
+
+function renderCart(){
+  const cartList = document.getElementById('cartList');
+  if(!cartList) return;
+  const cart = readCart();
+  cartList.innerHTML = '';
+  let total = 0;
+  cart.forEach(item=>{
+    total += item.qty * item.price;
+    const div = document.createElement('div');
+    div.className = 'cart-item';
+    div.innerHTML = `<img src="${item.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:8px">
+      <div style="flex:1"><div style="font-weight:800">${item.title}</div><div style="color:var(--muted);font-size:13px">Qty: ${item.qty} • ₦${Number(item.price).toLocaleString()}</div></div>
+      <div><button class="btn ghost remove" data-id="${item.id}">Remove</button></div>`;
+    cartList.appendChild(div);
+  });
+  document.getElementById('cartTotal').textContent = '₦' + Number(total).toLocaleString();
+  document.getElementById('cartCount').textContent = cart.reduce((s,i)=>s+i.qty,0);
+
+  // attach handlers
+  Array.from(document.querySelectorAll('.remove')).forEach(b=>{
+    b.addEventListener('click', (e)=>{
+      const id = e.target.dataset.id;
+      const c = readCart().filter(x=>x.id!==id);
+      writeCart(c);
+    });
+  });
+}
+renderCart();
+/* Opening cart from drawer link */
+document.getElementById('linkCart').addEventListener('click', (e)=>{
+  e.preventDefault();
+  const cartModal = document.getElementById('cartModal');
+  cartModal.style.display = 'block';
+  renderCart();
 });
 
-/* ---------- End ---------- */
+/* Opening cart from TOP cart button */
+document.getElementById('openCartTop').addEventListener('click', (e)=>{
+  e.preventDefault();
+  const cartModal = document.getElementById('cartModal');
+  cartModal.style.display = 'block';
+  renderCart();
+});
+
+/* close cart */
+document.getElementById('closeCart').addEventListener('click', ()=> document.getElementById('cartModal').style.display='none');
+document.getElementById('checkoutNow').addEventListener('click', ()=> alert('Checkout flow — integrate escrow/payment here (demo)'));
+
+/* Confirm popup handlers */
+document.getElementById('confirmProceed').addEventListener('click', ()=>{
+  document.getElementById('confirmBackdrop').style.display='none';
+  showToast('Proceeding to payment (demo). Order remains in cart.');
+});
+document.getElementById('confirmCancel').addEventListener('click', ()=>{
+  document.getElementById('confirmBackdrop').style.display='none';
+  showToast('Item kept in cart.');
+});
+
+/* Logout example */
+document.getElementById('linkLogout').addEventListener('click', (e)=>{
+  e.preventDefault();
+  localStorage.removeItem(USER_KEY);
+  setAvatarFromUser();
+  showToast('Logged out (demo)');
+});
+
+/* clicking profile icon opens drawer */
+document.getElementById('profileIcon').addEventListener('click', ()=>{ drawer.classList.add('open'); backdrop.style.display='block'; });
+
+/* quick link demo behaviors */
+document.getElementById('linkSell').addEventListener('click', (e)=>{ e.preventDefault(); alert('Open Sell Marketplace (post ad) — implement form separately.'); });
+document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); alert('My Ads page — implement separately.'); });
+document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); alert('Profile page (demo).'); });
+
+/* toast */
+function showToast(msg, ms=2200){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> t.style.display='none', ms);
+}
+
+/* On first load: create demo user for avatar visuals (optional) */
+if(!readUser()){
+  writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
+  setAvatarFromUser();
+} else {
+  setAvatarFromUser();
+}
+
+/* close modals/backdrops on outside click */
+document.querySelectorAll('.modal-backdrop, .confirm-backdrop').forEach(b=>{
+  b.addEventListener('click', (e)=>{ if(e.target === b) { b.style.display='none'; } });
+});
+
+/* accessibility: ESC to close drawer or modals */
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape'){
+    drawer.classList.remove('open'); backdrop.style.display='none';
+    document.querySelectorAll('.modal-backdrop, .confirm-backdrop').forEach(m=>m.style.display='none');
+    document.getElementById('cartModal').style.display='none';
+  }
+});
 </script>
 </body>
-</html>
+</html> 
