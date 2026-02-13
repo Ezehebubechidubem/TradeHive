@@ -374,102 +374,72 @@ function distanceMeters(lat1, lon1, lat2, lon2){
   return R * c;
 }
 
-// attemptAssign helper - now returns assigned technician object or false
-// techs: array [{id, lat, lng, distance}, ...]
-async function attemptAssign(jobId, techs, attemptIndex = 0){
-  if(!Array.isArray(techs) || techs.length === 0) {
-    await pool.query(`UPDATE jobs SET status='pending_assignment' WHERE id=$1`, [jobId]);
-    return false;
-  }
 
-  if(attemptIndex >= techs.length){
-    await pool.query(`UPDATE jobs SET status='pending_assignment' WHERE id=$1`, [jobId]);
-    return false;
-  }
-
-  const tech = techs[attemptIndex];
-  const clientConn = await pool.connect();
-  try {
-    const now = new Date();
-    // keep short expiry for technician acceptance (60s)
-    const expiresAt = new Date(now.getTime() + 60*1000);
-
-    const res = await clientConn.query(`
-      UPDATE jobs
-      SET assigned_tech_id=$1, status='pending_accept', assigned_at=now(), expires_at=$2
-      WHERE id=$3 AND status IN ('created','pending_assignment')
-      RETURNING *`, [tech.id, expiresAt.toISOString(), jobId]);
-
-    if(!res.rows.length) {
-      // couldn't reserve the job (maybe status changed) -> move on
-      return false;
-    }
-
-    // fetch technician profile to return
-    const trow = (await clientConn.query(`SELECT id, fullname, username, avatar_url, phone, email, lat, lng FROM users WHERE id=$1`, [tech.id])).rows[0] || null;
-
-    // schedule expiration handler to reassign if technician doesn't respond
-    setTimeout(async ()=>{
-      try{
-        const check = await pool.query(`SELECT status, assigned_tech_id FROM jobs WHERE id=$1`, [jobId]);
-        if(!check.rows.length) return;
-        const js = check.rows[0];
-        if(js.status === 'pending_accept' && js.assigned_tech_id === tech.id){
-          // revert assignment and try next
-          await pool.query(`UPDATE jobs SET status='pending_assignment', assigned_tech_id=NULL, assigned_at=NULL, expires_at=NULL WHERE id=$1`, [jobId]);
-          // attempt next tech (note: this is fire-and-forget, do not await)
-          await attemptAssign(jobId, techs, attemptIndex + 1);
-        }
-      }catch(e){ console.error('timeout handler error', e); }
-    }, 60*1000);
-
-    // Return tech profile to caller so frontend can display immediately
-    return trow || { id: tech.id };
-  } finally {
-    clientConn.release();
-  }
-}
-
-// ------------------ CLOUDINARY CONFIG (optional) ------------------
-// We'll configure Cloudinary storage and create uploadCloud. If Cloudinary env vars are not set, we will keep uploadDisk as the active uploader.
+// ------------------ CLOUDINARY CONFIG (safe public fallback + diagnostics) ------------------
+const crypto = require('crypto'); // already used elsewhere, safe to require again
 let uploadCloud = null;
+
 try {
-  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  if (
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  ) {
     const cloudinary = require('cloudinary').v2;
     const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
+    // ensure secure delivery
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true
     });
 
+    // Build CloudinaryStorage with safe options
     const cloudStorage = new CloudinaryStorage({
       cloudinary,
       params: async (req, file) => {
+        // Use 'auto' so Cloudinary handles image vs video
         const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
         return {
           folder: isVideo ? 'wireconnect/kyc/videos' : 'wireconnect/kyc/images',
-          resource_type: isVideo ? 'video' : 'image',
+          // resource_type 'auto' avoids wrong resource_type errors
+          resource_type: 'auto',
+          // For now keep public (same behaviour as before)
+          // If later you want private, change to: type: 'private'
+          // type: 'private',
           public_id: `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`
         };
       }
     });
 
-    uploadCloud = multer({ storage: cloudStorage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB per file for cloud
-    console.log('Cloudinary configured: using Cloudinary for uploads.');
+    // Create multer instance with Cloudinary storage
+    uploadCloud = multer({
+      storage: cloudStorage,
+      limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file (same as before)
+    });
+
+    // Light API test to validate credentials (non-blocking)
+    cloudinary.api.resources({ max_results: 1 })
+      .then((r) => {
+        console.log('Cloudinary credentials OK — resources test succeeded.');
+      })
+      .catch((err) => {
+        // This will show up in Render logs -> helpful to debug credential / network issues
+        console.error('Cloudinary API test failed — check CLOUDINARY env vars and network access.', err && err.message ? err.message : err);
+        // if the test fails we still keep uploadCloud set so multer will attempt uploads,
+        // but we now have a clear log message to act on.
+      });
+
+    console.log('Cloudinary configured: using Cloudinary for uploads (public).');
   } else {
     console.log('Cloudinary not configured: using local disk uploads as fallback.');
   }
 } catch (err) {
-  console.error('Cloudinary setup error (continuing with disk uploads):', err);
+  console.error('Cloudinary setup error (continuing with disk uploads):', err && err.stack ? err.stack : err);
   uploadCloud = null;
 }
-
-// Choose the active upload middleware (cloud if available, else disk)
-const upload = uploadCloud || uploadDisk;
-
-// ------------------ End helpers ------------------
 
 //Testing password
 app.get('/test-admin', async (req,res)=>{
