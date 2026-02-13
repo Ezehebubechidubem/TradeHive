@@ -1,0 +1,79 @@
+// pointer swipe
+    let startX=null, curX=0;
+    carousel.addEventListener('pointerdown', (ev)=>{ startX = ev.clientX; carousel.style.transition='none'; clearInterval(auto); });
+    carousel.addEventListener('pointermove', (ev)=>{ if(startX===null) return; curX = ev.clientX - startX; carousel.style.transform = `translateX(calc(-${carousel.dataset.index*100}% + ${curX}px))`; });
+    carousel.addEventListener('pointerup', ()=>{ if(startX===null) return; carousel.style.transition=''; if(Math.abs(curX)>50){ const idx=parseInt(carousel.dataset.index||0); const next = curX<0 ? Math.min(idx+1, prod.images.length-1) : Math.max(idx-1,0); carousel.dataset.index = next; carousel.style.transform = `translateX(-${next*100}%)`; dots.querySelectorAll('.dot').forEach(d=>d.classList.remove('active')); dots.querySelectorAll('.dot')[next].classList.add('active'); } else { const idx=parseInt(carousel.dataset.index||0); carousel.style.transform = `translateX(-${idx*100}%)`; } startX=null; curX=0; auto = setInterval(()=> { const idx=parseInt(carousel.dataset.index||0); const next=(idx+1)%prod.images.length; carousel.style.transform=`translateX(-${next*100}%)`; carousel.dataset.index=next; dots.querySelectorAll('.dot').forEach(d=>d.classList.remove('active')); dots.querySelectorAll('.dot')[next].classList.add('active'); },3000); });
+
+    // click to zoom (open modal)
+    carousel.addEventListener('click', ()=> openZoom(prod.images, parseInt(carousel.dataset.index||0), prod));
+
+    // qty and total update
+    const qty = card.querySelector('.qty'), totalEl = card.querySelector('.total');
+    qty.addEventListener('input', ()=>{ let v=parseInt(qty.value||1); if(v<1) v=1; if(v>prod.quantity) v=prod.quantity; qty.value=v; totalEl.textContent = formatN(v*prod.price_per); });
+
+    // add to cart
+    card.querySelector('.add').addEventListener('click', ()=> addToCart(prod, parseInt(qty.value||1)));
+
+    // view button - open zoom with details
+    card.querySelector('.view').addEventListener('click', ()=> openZoom(prod.images, parseInt(carousel.dataset.index||0), prod));
+  });
+}
+
+/* -------------------------
+  Zoom modal
+   ------------------------- */
+const zoomBackdrop = $('#zoomBackdrop'), zoomContent = $('#zoomContent');
+function openZoom(images, idx=0, meta=null){
+  zoomContent.innerHTML = '';
+  const wrapper = document.createElement('div');
+  const img = document.createElement('img'); img.src = images[idx]; img.style.width='100%'; img.style.height='auto'; img.style.objectFit='contain';
+  wrapper.appendChild(img);
+  if(meta){
+    const info = document.createElement('div'); info.style.color= 'var(--light)'; info.style.padding='10px 0'; info.innerHTML = `<h3 style="margin:0 0 6px 0">${meta.title}</h3><div style="color:var(--muted)">${meta.desc}</div><div style="margin-top:8px;font-weight:800">${formatN(meta.price_per)} • ${meta.location}</div>`;
+    zoomContent.appendChild(info);
+  }
+  zoomContent.appendChild(wrapper);
+  zoomBackdrop.style.display='flex'; zoomBackdrop.setAttribute('aria-hidden','false');
+}
+zoomBackdrop.addEventListener('click', ()=> { zoomBackdrop.style.display='none'; zoomBackdrop.setAttribute('aria-hidden','true'); zoomContent.innerHTML=''; });
+
+/* -------------------------
+  Cart modal toggle & checkout
+   ------------------------- */
+$('#openCart').addEventListener('click', ()=> {
+  const m = $('#cartModal'); m.style.display = m.style.display === 'block' ? 'none' : 'block'; renderCartUI();
+});
+$('#checkoutBtn').addEventListener('click', ()=> { const c = readCart(); if(c.length===0) { showToast('Cart is empty'); return; } showToast('Checkout: integrate escrow & payment backend'); });
+
+/* -------------------------
+  Initialize UI
+   ------------------------- */
+buildSubtabs('All'); renderProducts(); renderCartUI();
+
+/* -------------------------
+  Subtabs builder function (reusable definition)
+   ------------------------- */
+function buildSubtabs(mainKey) {
+  subTabRoot.innerHTML = '';
+  const entry = MAIN_CATS.find(m=>m.key===mainKey);
+  if(!entry || entry.subs.length===0) { subTabRoot.setAttribute('aria-hidden','true'); return; }
+  subTabRoot.setAttribute('aria-hidden','false');
+  entry.subs.forEach((s,i)=>{
+    const el = document.createElement('div');
+    el.className = 'subtab' + (i===0 ? ' active' : '');
+    el.textContent = s;
+    el.dataset.sub = s;
+    el.addEventListener('click', ()=> { $all('.subtab').forEach(x=>x.classList.remove('active')); el.classList.add('active'); renderProducts(); });
+    subTabRoot.appendChild(el);
+  });
+}
+
+/* ---------- Accessibility / Escape ---------- */
+document.addEventListener('keydown', (e)=> {
+  if(e.key === 'Escape'){ $('#cartModal').style.display='none'; zoomBackdrop.style.display='none'; zoomBackdrop.setAttribute('aria-hidden','true'); }
+});
+
+/* ---------- End ---------- */
+</script>
+</body>
+</html>
