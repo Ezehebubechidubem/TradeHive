@@ -508,3 +508,152 @@ app.post('/api/register', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
+// Login (updated: supports admin via env, staff with redirect, and normal users)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { login, password, email } = req.body || {};
+    if (!login || !password) return res.status(400).json({ success: false, message: 'Login and password required' });
+
+    const loginValue = String(login).trim();
+    const payloadEmail = email ? String(email).trim() : null;
+
+    // ---------- ADMIN (env-driven) ----------
+    // Set ADMIN_USERNAME and ADMIN_PASSWORD_HASH (bcrypt hash) in your environment
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+    const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
+
+    if (loginValue === ADMIN_USERNAME || (payloadEmail && payloadEmail === ADMIN_USERNAME)) {
+      // If ADMIN_PASSWORD_HASH is present, compare with bcrypt
+      if (ADMIN_PASSWORD_HASH && await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) {
+        // Admin signed in
+        return res.json({
+          success: true,
+          message: 'Admin login successful',
+          role: 'admin',
+          user: null
+        });
+      }
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    // ---------- LOOKUP USER IN DB ----------
+    const client = await pool.connect();
+    try {
+      const q = `SELECT * FROM users WHERE email=$1 OR username=$1 OR phone=$1 LIMIT 1`;
+      const r = await client.query(q, [loginValue]);
+      if (!r.rows.length) return res.status(404).json({ success: false, message: 'User not found' });
+      const user = r.rows[0];
+
+      // verify password
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) return res.status(401).json({ success: false, message: 'Incorrect password' });
+
+      // normalize role
+      const roleRaw = (user.role || '').toString().toLowerCase();
+
+      // build safeUser to return (same fields as before)
+      const safeUser = {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        phone: user.phone,
+        fullname: user.fullname,
+        username: user.username,
+        state: user.state,
+        lga: user.lga,
+        city: user.city,
+        gender: user.gender,
+        specializations: user.specializations,
+        kyc_status: user.kyc_status,
+        avatar_url: user.avatar_url,
+        profile_complete: user.profile_complete,
+        account_details: user.account_details,
+        online: user.online,
+        lat: user.lat,
+        lng: user.lng,
+        created_at: user.created_at
+      };
+
+      // ---------- STAFF FLOW ----------
+      if (roleRaw === 'staff') {
+        const BASE = process.env.ADMIN_UI_BASE || 'https://your-admin-ui.example.com';
+        const ROLE_ROUTES = {
+          'customer-support': `${BASE}/support`,
+          'customer support': `${BASE}/support`,
+          'transaction-review': `${BASE}/review`,
+          'transaction review': `${BASE}/review`,
+          'scaling': `${BASE}/scaling`,
+          'api manager': `${BASE}/api-manager`,
+          'api-manager': `${BASE}/api-manager`,
+          'developer': `${BASE}/developer`,
+          'kyc': `${BASE}/kyc`,
+          'fraud': `${BASE}/fraud`,
+          'log': `${BASE}/logs`,
+          'notification': `${BASE}/notifications`
+        };
+        const normalizedRole = (user.specializations && user.specializations[0]) ? String(user.specializations[0]).toLowerCase() : (user.staff_role || '');
+        const redirect = ROLE_ROUTES[normalizedRole] || ROLE_ROUTES[(user.role || '').toLowerCase()] || `${BASE}/staff`;
+
+        return res.json({
+          success: true,
+          message: 'Staff login successful',
+          role: 'staff',
+          user: safeUser,
+          redirect
+        });
+      }
+
+      // ---------- TECH / CLIENT (regular users) ----------
+      if (roleRaw === 'worker' || roleRaw === 'technician') {
+        return res.json({ success: true, message: 'Login successful', role: 'worker', user: safeUser });
+      }
+
+      return res.json({ success: true, message: 'Login successful', role: roleRaw || 'client', user: safeUser });
+
+    } finally {
+      client.release();
+    }
+
+  } catch (e) {
+    console.error('Server error /api/login', e);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+// root
+app.get('/', (req,res)=> res.send('WireConnect backend (with Profile & KYC + infra) running'));
+
+// Attach Sentry error handler (if enabled) AFTER all routes
+if (process.env.SENTRY_DSN) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
+// start
+const server = app.listen(PORT, ()=> console.log(`WireConnect backend listening on port ${PORT}`));
+
+// Graceful shutdown for Redis/Bull worker on termination
+async function shutdown() {
+  console.log('Shutting down...');
+  try {
+    if (jobWorker) {
+      await jobWorker.close();
+      console.log('Bull worker closed.');
+    }
+    if (jobQueue) {
+      await jobQueue.close();
+      console.log('Bull queue closed.');
+    }
+    if (redis) {
+      redis.disconnect();
+      console.log('Redis disconnected.');
+    }
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
+  } catch (err) {
+    console.error('Shutdown error', err);
+    process.exit(1);
+  }
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
