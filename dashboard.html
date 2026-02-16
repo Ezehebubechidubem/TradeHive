@@ -865,8 +865,8 @@ function setActiveNav(id){
   if(id) document.getElementById(id).classList.add('active');
 }
 document.getElementById('navHome').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navHome'); window.scrollTo({top:0,behavior:'smooth'}); });
-document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navJobs'); showToast('Jobs (demo)'); });
-document.getElementById('navMessages').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navMessages'); showToast('Messages (demo)'); });
+document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navJobs'); showToast('Ads (demo)'); });
+document.getElementById('navMessages').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navMessages'); showToast('Notifications (demo)'); });
 document.getElementById('navProfile').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navProfile'); openDrawer(); });
 
 document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); document.getElementById('linkSell').click(); });
