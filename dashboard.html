@@ -369,3 +369,375 @@
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Messages</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
   </nav>
+<script>
+/* ============================
+   Simple local storage helpers
+   (keeping your original storage keys)
+   ============================ */
+const USER_KEY = 'wire_user_v1';
+const CART_KEY = 'wire_cart_v1';
+
+function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
+function writeUser(u){ localStorage.setItem(USER_KEY, JSON.stringify(u)); renderCart(); }
+function readCart(){ try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch(e){ return []; } }
+function writeCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); renderCart(); }
+
+/* ---------------------------
+  Avatar & profile display
+   --------------------------- */
+function setAvatarFromUser(){
+  const u = readUser();
+  const nameEl = document.getElementById('profileName');
+  const emailEl = document.getElementById('profileEmail');
+  const avatarBox = document.getElementById('avatarBox');
+  const avatarWrap = document.getElementById('avatarWrap');
+  const mini = document.getElementById('miniAvatar');
+
+  if(u){
+    nameEl.textContent = u.fullname || u.username || 'User';
+    emailEl.textContent = u.phone || u.email || 'Member';
+    if(u.avatarUrl){
+      avatarBox.innerHTML = `<img src="${u.avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover">`;
+      mini.innerHTML = `<img src="${u.avatarUrl}" alt="mini" style="width:34px;height:34px;object-fit:cover">`;
+    } else {
+      const initials = (u.fullname || u.username || 'G').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
+      avatarBox.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:linear-gradient(180deg,#fff,#faf7ef); width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+      mini.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:#fff; width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+    }
+  } else {
+    nameEl.textContent = 'Guest';
+    emailEl.textContent = 'Not signed in';
+    avatarBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="42" height="42"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+    mini.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+  }
+
+  // online status ring
+  const online = (u && u.online) ? true : false;
+  if(online){ avatarWrap.classList.add('online'); } else { avatarWrap.classList.remove('online'); }
+
+}
+setAvatarFromUser();
+
+/* ---------------------------
+  Status switch to toggle online/offline
+   --------------------------- */
+const statusSwitch = document.getElementById('statusSwitch');
+const user = readUser();
+statusSwitch.checked = (user && user.online) ? true : false;
+statusSwitch.addEventListener('change', ()=>{
+  let u = readUser() || { username:'guest' };
+  u.online = statusSwitch.checked;
+  writeUser(u);
+  setAvatarFromUser();
+  renderProducts(); // optional
+  showToast(u.online ? 'You are online' : 'You are offline');
+});
+
+/* ---------------------------
+  Settings modal handlers
+   --------------------------- */
+const modalBackdrop = document.getElementById('modalBackdrop');
+document.getElementById('openSettings').addEventListener('click', (e)=>{
+  e.preventDefault();
+  modalBackdrop.style.display = 'flex';
+  document.getElementById('themeSwitch').checked = document.body.classList.contains('dark');
+});
+document.getElementById('closeSettings').addEventListener('click', ()=> modalBackdrop.style.display='none');
+
+document.getElementById('themeSwitch').addEventListener('change', (e)=>{
+  if(e.target.checked){ document.body.classList.add('dark'); showToast('Dark mode enabled'); } else { document.body.classList.remove('dark'); showToast('Light mode enabled'); }
+});
+
+/* Change password modal */
+document.getElementById('openChangePassword').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='flex'; });
+document.getElementById('closePw').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='none'; });
+document.getElementById('savePw').addEventListener('click', ()=>{
+  document.getElementById('pwBackdrop').style.display='none';
+  showToast('Password updated (demo)');
+});
+
+/* Account details modal */
+document.getElementById('openAccountDetails').addEventListener('click', ()=>{
+  const u = readUser() || {};
+  document.getElementById('accName').value = u.fullname || '';
+  document.getElementById('accPhone').value = u.phone || '';
+  document.getElementById('accCity').value = u.city || '';
+  document.getElementById('accBackdrop').style.display='flex';
+});
+document.getElementById('closeAcc').addEventListener('click', ()=> document.getElementById('accBackdrop').style.display='none');
+document.getElementById('saveAcc').addEventListener('click', ()=>{
+  const u = readUser() || {};
+  u.fullname = document.getElementById('accName').value.trim();
+  u.phone = document.getElementById('accPhone').value.trim();
+  u.city = document.getElementById('accCity').value.trim();
+  writeUser(u);
+  setAvatarFromUser();
+  document.getElementById('accBackdrop').style.display='none';
+  showToast('Account details saved (demo)');
+});
+
+/* ---------------------------
+  Build subcategories per main category
+   --------------------------- */
+const SUBS = {
+  'All': ['All'],
+  'Foods': ['All','Food','Pastry','Items'],
+  'Clothing': ['All','Men','Women','Children','Shoes','Jewellery'],
+  'Electronics & Gadgets': ['All','Phones','Laptop','MP3','iPad','Watch','Fans','Others']
+};
+const catEls = document.querySelectorAll('.cat');
+const subRoot = document.getElementById('subcats');
+function buildSubcats(active){
+  subRoot.innerHTML = '';
+  const subs = SUBS[active] || ['All'];
+  subs.forEach((s,i)=>{
+    const d = document.createElement('div'); d.className='subcat' + (i===0?' active':''); d.textContent=s; d.dataset.sub=s;
+    d.addEventListener('click', ()=>{ document.querySelectorAll('.subcat').forEach(x=>x.classList.remove('active')); d.classList.add('active'); renderProducts(); });
+    subRoot.appendChild(d);
+  });
+}
+catEls.forEach(c=> c.addEventListener('click', ()=>{
+  catEls.forEach(x=>x.classList.remove('active'));
+  c.classList.add('active');
+  buildSubcats(c.dataset.cat);
+  renderProducts();
+}));
+buildSubcats('All');
+
+/* ---------------------------
+  Demo PRODUCTS (if not present)
+   --------------------------- */
+const PRODUCTS = [
+  { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
+      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg',
+      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg'
+    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food'},
+  { id:'p2', title:'Assorted Pastry Box', desc:'Delicious pastry box for events.', images:[
+      'https://i.postimg.cc/SsJHtvkf/IMG-20260214-162941.jpg',
+      'https://i.postimg.cc/3x3z0XgY/pastry1.jpg'
+    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry'},
+  { id:'p3', title:'Designer Ankara Shirt (XL)', desc:'Handmade Ankara shirt — top quality fabric.', images:[
+      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg',
+      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg'
+    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men'},
+  { id:'p4', title:'Women Floral Dress', desc:'Summer women dress, size M.', images:[
+      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg',
+      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg'
+    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women'},
+  { id:'p5', title:'Portable Radio', desc:'Compact radio with excellent sound quality.', images:[
+      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg',
+      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg'
+    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio'},
+  { id:'p6', title:'Table Fan 3-speed', desc:'Durable table fan for home.', images:[
+      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg',
+      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg'
+    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans'}
+];
+
+
+/* ---------------------------
+  Products rendering & cart
+   --------------------------- */
+const productsRoot = document.getElementById('products');
+function renderProducts(){
+  productsRoot.innerHTML = '';
+  const activeCat = document.querySelector('.cat.active').dataset.cat;
+  const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
+
+  const list = PRODUCTS.filter(p=>{
+    if(activeCat !== 'All' && p.category !== activeCat) return false;
+    if(activeSub !== 'All' && p.sub !== activeSub) return false;
+    return true;
+  });
+
+  list.forEach(p=>{
+    const el = document.createElement('article'); el.className='product';
+    el.innerHTML = `
+      <div class="media">
+        <img src="${p.images[0]}" alt="">
+        ${p.live && p.seller_online ? `<div class="live-pill"><span class="live-dot"></span> LIVE</div>` : `<div class="live-pill" style="background:#f2f2f2;color:#333">Offline</div>`}
+      </div>
+      <div class="body">
+        <div class="p-title">${p.title}</div>
+        <div class="p-desc">${p.desc}</div>
+        <div class="meta"><div class="price">₦${Number(p.price).toLocaleString()}</div><div class="loc">${p.loc} • ${p.qty} pcs</div></div>
+        <div class="qty-row"><label style="font-weight:700">Qty</label><input class="qty" type="number" min="1" max="${p.qty}" value="1" /></div>
+        <div class="actions"><button class="btn gold addBtn">Add to cart</button><button class="btn ghost viewBtn">View</button></div>
+      </div>
+    `;
+    productsRoot.appendChild(el);
+
+    // handlers
+    el.querySelector('.addBtn').addEventListener('click', ()=>{
+      const q = parseInt(el.querySelector('.qty').value || '1');
+      addToCart(p, q, true); // show popup per request
+    });
+    el.querySelector('.viewBtn').addEventListener('click', ()=>{ alert('Open product detail (demo).'); });
+  });
+}
+renderProducts();
+
+/* cart functions */
+function addToCart(product, qty, showConfirm=false){
+  // add to storage
+  const cart = readCart();
+  const found = cart.find(i=>i.id===product.id);
+  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
+  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
+  writeCart(cart);
+
+  // show confirm popup if requested
+  if(showConfirm){
+    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
+    document.getElementById('confirmBackdrop').style.display='flex';
+  } else {
+    showToast('Added to cart');
+  }
+}
+
+function renderCart(){
+  const cartList = document.getElementById('cartList');
+  if(!cartList) return;
+  const cart = readCart();
+  cartList.innerHTML = '';
+  let total = 0;
+  cart.forEach(item=>{
+    total += item.qty * item.price;
+    const div = document.createElement('div');
+    div.className = 'cart-item';
+    div.innerHTML = `<img src="${item.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:8px">
+      <div style="flex:1"><div style="font-weight:800">${item.title}</div><div style="color:var(--muted);font-size:13px">Qty: ${item.qty} • ₦${Number(item.price).toLocaleString()}</div></div>
+      <div><button class="btn ghost remove" data-id="${item.id}">Remove</button></div>`;
+    cartList.appendChild(div);
+  });
+  document.getElementById('cartTotal').textContent = '₦' + Number(total).toLocaleString();
+  document.getElementById('cartCount').textContent = cart.reduce((s,i)=>s+i.qty,0);
+  document.getElementById('cartCount').setAttribute('aria-label', `${cart.reduce((s,i)=>s+i.qty,0)} items in cart`);
+
+  // attach handlers
+  Array.from(document.querySelectorAll('.remove')).forEach(b=>{
+    b.addEventListener('click', (e)=>{
+      const id = e.target.dataset.id;
+      const c = readCart().filter(x=>x.id!==id);
+      writeCart(c);
+      renderCart();
+      showToast('Removed');
+    });
+  });
+}
+renderCart();
+
+/* Opening cart from drawer link */
+document.getElementById('linkCartSide').addEventListener('click', (e)=>{
+  e.preventDefault();
+  const cartModal = document.getElementById('cartModal');
+  cartModal.style.display = 'block';
+  renderCart();
+  closeDrawer();
+});
+
+/* Opening cart from TOP cart button */
+document.getElementById('openCartTop').addEventListener('click', (e)=>{
+  e.preventDefault();
+  const cartModal = document.getElementById('cartModal');
+  cartModal.style.display = 'block';
+  renderCart();
+});
+
+/* close cart */
+document.getElementById('closeCart').addEventListener('click', ()=> document.getElementById('cartModal').style.display='none');
+document.getElementById('checkoutNow').addEventListener('click', ()=> alert('Checkout flow — integrate escrow/payment here (demo)'));
+
+/* Confirm popup handlers */
+document.getElementById('confirmProceed').addEventListener('click', ()=>{
+  document.getElementById('confirmBackdrop').style.display='none';
+  showToast('Proceeding to payment (demo). Order remains in cart.');
+});
+document.getElementById('confirmCancel').addEventListener('click', ()=>{
+  document.getElementById('confirmBackdrop').style.display='none';
+  showToast('Item kept in cart.');
+});
+
+/* Logout example */
+document.getElementById('linkLogout').addEventListener('click', (e)=>{
+  e.preventDefault();
+  localStorage.removeItem(USER_KEY);
+  setAvatarFromUser();
+  showToast('Logged out (demo)');
+});
+
+/* clicking profile icon opens drawer */
+const drawer = document.getElementById('drawer');
+const backdrop = document.getElementById('drawerBackdrop');
+document.getElementById('profileIcon').addEventListener('click', ()=>{ openDrawer(); });
+
+document.getElementById('hambBtn').addEventListener('click', ()=>{ openDrawer(); });
+document.getElementById('drawerClose').addEventListener('click', ()=>{ closeDrawer(); });
+backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
+
+function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
+function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
+
+/* quick link demo behaviors */
+document.getElementById('linkSell').addEventListener('click', (e)=>{ e.preventDefault(); alert('Open Sell Marketplace (post ad) — implement form separately.'); closeDrawer(); });
+document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); alert('My Ads page — implement separately.'); closeDrawer(); });
+document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); alert('Profile page (demo).'); closeDrawer(); });
+
+/* toast */
+function showToast(msg, ms=2200){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> t.style.display='none', ms);
+}
+
+/* On first load: create demo user for avatar visuals (optional) */
+if(!readUser()){
+  writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
+  setAvatarFromUser();
+} else {
+  setAvatarFromUser();
+}
+
+/* close modals/backdrops on outside click */
+document.querySelectorAll('.modal-backdrop, .confirm-backdrop').forEach(b=>{
+  b.addEventListener('click', (e)=>{ if(e.target === b) { b.style.display='none'; } });
+});
+
+/* accessibility: ESC to close drawer or modals */
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape'){
+    closeDrawer();
+    document.querySelectorAll('.modal-backdrop, .confirm-backdrop').forEach(m=>m.style.display='none');
+    document.getElementById('cartModal').style.display='none';
+  }
+});
+
+/* ---------------------------
+  Bottom nav & FAB handlers (app feel)
+   --------------------------- */
+function setActiveNav(id){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if(id) document.getElementById(id).classList.add('active');
+}
+document.getElementById('navHome').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navHome'); window.scrollTo({top:0,behavior:'smooth'}); });
+document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navJobs'); showToast('Jobs (demo)'); });
+document.getElementById('navMessages').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navMessages'); showToast('Messages (demo)'); });
+document.getElementById('navProfile').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navProfile'); openDrawer(); });
+
+document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); document.getElementById('linkSell').click(); });
+
+/* Keep side cart link in sync with top cart button */
+document.getElementById('linkCartSide').addEventListener('click',(e)=>{ e.preventDefault(); const modal = document.getElementById('cartModal'); modal.style.display='block'; renderCart(); });
+
+/* tiny improvement: update cart count on storage changes (other tabs) */
+window.addEventListener('storage', (e)=>{
+  if(e.key === CART_KEY) renderCart();
+});
+
+/* Initializations already done earlier */
+renderProducts();
+renderCart();
+</script>
+</body>
+</html>
