@@ -4,71 +4,96 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>TradeHive — Login</title>
+  <meta id="metaThemeColor" name="theme-color" content="#071014" />
   <style>
     :root{
-      --bg: #0b0b0b;
-      --card: #0f1724;
+      /* Dark theme tokens (default) */
+      --bg-dark: #0b0b0b;
+      --card-dark: #0f1724;
+      --text-dark: #e6eef8;
+      --muted-dark: #94a3b8;
+      --border-dark: rgba(255,255,255,0.06);
+
+      /* Light theme tokens (pure white theme) */
+      --bg-light: #ffffff;
+      --card-light: #ffffff;
+      --text-light: #071014;
+      --muted-light: #6b7280;
+      --border-light: rgba(7,16,20,0.06);
+
       --gold1: #FFB703;
       --gold2: #F59E0B;
-      --muted: #94a3b8;
       --danger: #ef4444;
-      --accent: #0b5cff; /* kept for fallback text */
-      --btn-shadow: rgba(11,11,11,0.18);
+      --accent: #0b5cff;
     }
 
-    /* Reset + base */
-    *{box-sizing:border-box}
-    html,body{height:100%; margin:0}
-    body{
+    /* Base (dark by default) */
+    body {
+      --bg: var(--bg-dark);
+      --card: var(--card-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --border: var(--border-dark);
+      background: linear-gradient(180deg,#020202 0%, #070707 40%, var(--bg) 100%);
+      color: var(--text);
       font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
-      background: linear-gradient(180deg,#020202 0%, #070707 40%, #0b0b0b 100%);
-      color: #e6eef8;
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
+      margin:0; height:100%;
+      transition: background .18s ease, color .18s ease;
     }
 
-    /* Full-bleed banner/header */
-    header.banner{
-      width:100%;
-      display:block;
-      box-shadow: 0 6px 30px rgba(0,0,0,0.6);
-      position:relative;
-      z-index:999;
-    }
-    .banner .banner-inner {
-      width:100%;
-      max-height: 220px;
-      overflow:hidden;
-    }
-    .banner img{
-      width:100%;
-      height:auto;
-      display:block;
-      object-fit: cover;
-      max-height: 220px;
-      width:100vw;
+    /* Light mode - pure white theme */
+    body.light {
+      --bg: var(--bg-light);
+      --card: var(--card-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --border: var(--border-light);
+      background: var(--bg);
+      color: var(--text);
     }
 
-    /* layout */
+    *{box-sizing:border-box}
+    html,body{height:100%; margin:0}
+
+    /* Banner */
+    header.banner{ width:100%; box-shadow:0 6px 30px rgba(0,0,0,0.12); position:relative; z-index:999; }
+    .banner-inner{ max-height:220px; overflow:hidden; position:relative; background:var(--card); }
+    .banner-inner img{ width:100%; height:auto; max-height:220px; object-fit:cover; display:block; filter:saturate(.98); }
+
+    /* Theme toggle (top-right) */
+    .theme-toggle { position:absolute; right:12px; top:12px; z-index:1200; display:flex; align-items:center; gap:8px; }
+    .theme-switch {
+      display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px;
+      border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; font-weight:700;
+      box-shadow:0 6px 18px rgba(0,0,0,0.06);
+    }
+    .theme-switch:focus { outline:3px solid rgba(255,183,3,0.12); outline-offset:2px }
+
+    /* Layout / card */
     .wrap{max-width:920px;margin:18px auto;padding:20px}
     main.card{
       background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
       border-radius:12px;
       padding:22px;
-      box-shadow: 0 10px 40px rgba(2,6,23,0.7);
-      border: 1px solid rgba(255,183,3,0.06);
+      box-shadow: 0 10px 40px rgba(2,6,23,0.06);
+      border: 1px solid var(--border);
       max-width:520px;
-      margin: -40px auto 0; /* lift card over banner slightly */
+      margin: -40px auto 0;
     }
 
-    h2 { margin:0 0 10px 0; color:#e6eef8; font-size:20px; font-weight:800; }
+    h2 { margin:0 0 10px 0; color:var(--text); font-size:20px; font-weight:800; }
     .lead { color:var(--muted); margin:6px 0 8px;font-size:14px }
 
-    label{display:block;font-size:13px;margin-bottom:6px;color:#e6eef8}
+    label{display:block;font-size:13px;margin-bottom:6px;color:var(--text)}
     input[type="text"],input[type="password"]{
-      width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);font-size:14px;background:transparent;color:#e6eef8;box-sizing:border-box;
+      width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:14px;background:transparent;color:var(--text);box-sizing:border-box;
     }
-    input::placeholder{ color: rgba(230,238,248,0.28); }
+    input::placeholder{ color: rgba(0,0,0,0.28); }
+
+    /* ensure inputs readable in light mode */
+    body.light input, body.light select { background: #ffffff; color:var(--text); }
 
     .password-wrap{position:relative;display:flex;align-items:center}
     .toggle-eye{position:absolute;right:10px;cursor:pointer;color:var(--muted);display:flex;align-items:center;gap:6px}
@@ -89,8 +114,8 @@
       font-size:15px;
       color:#071014;
       background: linear-gradient(180deg, var(--gold1), var(--gold2));
-      border: 2px solid #0b0b0b;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.45), inset 0 -8px 0 rgba(0,0,0,0.08);
+      border: 2px solid transparent;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.12);
       text-decoration:none;
       width:100%;
     }
@@ -103,11 +128,11 @@
     /* Overlay / modal */
     .overlay{
       position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-      background:rgba(2,6,23,0.75);z-index:1200;
+      background:rgba(2,6,23,0.6);z-index:1200;
     }
     .loader-card{
-      background:#061017;border-radius:12px;padding:22px 26px;display:flex;flex-direction:column;align-items:center;gap:12px;
-      box-shadow:0 18px 48px rgba(2,6,23,0.9);min-width:320px;text-align:center;border:1px solid rgba(255,255,255,0.03);
+      background:var(--card);border-radius:12px;padding:22px 26px;display:flex;flex-direction:column;align-items:center;gap:12px;
+      box-shadow:0 18px 48px rgba(2,6,23,0.9);min-width:320px;text-align:center;border:1px solid var(--border);
     }
     .spinner{
       width:48px;height:48px;border-radius:50%;border:5px solid rgba(255,255,255,0.03);border-top-color:var(--gold1);animation:spin 1s linear infinite;
@@ -115,23 +140,31 @@
     @keyframes spin{to{transform:rotate(360deg)}}
 
     .result-emoji{font-size:36px}
-    .result-title{font-weight:800;margin-top:6px;color:#e6eef8}
-    .result-msg{color:#94a3b8;margin-top:6px;font-size:14px}
+    .result-title{font-weight:800;margin-top:6px;color:var(--text)}
+    .result-msg{color:var(--muted);margin-top:6px;font-size:14px}
     .result-close{margin-top:12px;padding:10px 14px;border-radius:10px;border:0;cursor:pointer;background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014;font-weight:800}
+
+    .error-text{color:var(--danger); font-weight:700; margin-top:8px; display:none}
   </style>
 </head>
 <body>
   <!-- Banner -->
   <header class="banner" role="banner" aria-label="TradeHive banner">
     <div class="banner-inner">
-      <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive banner">
+      <img id="bannerImg" src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive banner">
+      <div class="theme-toggle" aria-hidden="false">
+        <div id="themeSwitch" tabindex="0" role="button" aria-pressed="false" class="theme-switch" title="Toggle dark / light mode">
+          <span id="themeIcon">🌙</span>
+          <span id="themeText">Dark</span>
+        </div>
+      </div>
     </div>
   </header>
 
   <div class="wrap" role="main">
     <main class="card" aria-labelledby="loginTitle">
       <h2 id="loginTitle">Sign in to TradeHive</h2>
-      <p class="lead">Welcome back — find work or hire trusted professionals.</p>
+      <p class="lead">Welcome back — find work or hire trusted sellers.</p>
 
       <form id="loginForm" autocomplete="off" onsubmit="return false;">
         <div style="margin-top:8px">
@@ -143,7 +176,7 @@
           <label for="password" class="small">Password</label>
           <div class="password-wrap">
             <input id="password" name="password" type="password" placeholder="Enter your password" required />
-            <div id="togglePassword" class="toggle-eye" title="Show / hide password" aria-hidden="true">
+            <div id="togglePassword" class="toggle-eye" title="Show / hide password" role="button" tabindex="0">
               <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
               <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="display:none"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6 0-10-7-10-7"/><path d="M1 1l22 22"/></svg>
             </div>
@@ -160,6 +193,7 @@
         <div style="margin-top:16px;">
           <button id="submitBtn" class="btn" type="button" aria-label="Sign in">Sign in</button>
         </div>
+        <div id="err" class="error-text" role="alert">Error message</div>
       </form>
     </main>
   </div>
@@ -169,7 +203,7 @@
     <div class="loader-card">
       <div id="loadingView" style="display:flex;flex-direction:column;align-items:center;">
         <div class="spinner" aria-hidden="true"></div>
-        <div style="font-weight:800;color:#e6eef8">Signing you in…</div>
+        <div style="font-weight:800;color:var(--text)">Signing you in…</div>
         <div class="small muted">Please wait while we verify your credentials.</div>
       </div>
 
@@ -183,11 +217,68 @@
   </div>
 
   <script>
-    // backend base
-    const BACKEND_URL = 'https://wireconnet-1.onrender.com';
+    // Use your TradeHive backend URL
+    const BACKEND_URL = 'https://tradehive-s4e6.onrender.com';
     const LOGIN_ENDPOINT = BACKEND_URL + '/api/login';
 
-    // elements
+    // Theme keys and elements
+    const THEME_KEY = 'tradehive_theme';
+    const switchEl = document.getElementById('themeSwitch');
+    const themeIcon = document.getElementById('themeIcon');
+    const themeText = document.getElementById('themeText');
+    const metaThemeColor = document.getElementById('metaThemeColor');
+    const bannerImg = document.getElementById('bannerImg');
+
+    function setTheme(mode) {
+      if (mode === 'light') {
+        document.body.classList.add('light');
+        switchEl.setAttribute('aria-pressed','true');
+        themeIcon.textContent = '☀️';
+        themeText.textContent = 'Light';
+        metaThemeColor.setAttribute('content','#ffffff');
+        // optional: swap banner for light mode for contrast (left as same by default)
+      } else {
+        document.body.classList.remove('light');
+        switchEl.setAttribute('aria-pressed','false');
+        themeIcon.textContent = '🌙';
+        themeText.textContent = 'Dark';
+        metaThemeColor.setAttribute('content','#071014');
+      }
+      try { localStorage.setItem(THEME_KEY, mode); } catch(e){}
+    }
+
+    (function initTheme(){
+      let saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch(e){}
+      if (saved === 'light' || saved === 'dark') {
+        setTheme(saved);
+      } else {
+        // prefer dark unless user prefers light explicitly
+        const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+        setTheme(prefersLight ? 'light' : 'dark');
+      }
+    })();
+
+    function toggleTheme(){
+      const isLight = document.body.classList.contains('light');
+      setTheme(isLight ? 'dark' : 'light');
+    }
+    switchEl.addEventListener('click', toggleTheme);
+    switchEl.addEventListener('keydown', (e)=> { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTheme(); } });
+
+    // Password toggle
+    const togglePassword = document.getElementById('togglePassword');
+    const pw = document.getElementById('password');
+    const eyeOpen = document.getElementById('eyeOpen');
+    const eyeClosed = document.getElementById('eyeClosed');
+    function togglePasswordFn(){
+      if (pw.type === 'password') { pw.type = 'text'; eyeOpen.style.display='none'; eyeClosed.style.display='block'; }
+      else { pw.type = 'password'; eyeOpen.style.display='block'; eyeClosed.style.display='none'; }
+    }
+    togglePassword.addEventListener('click', togglePasswordFn);
+    togglePassword.addEventListener('keydown', (e)=> { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePasswordFn(); } });
+
+    // Elements for login flow
     const overlay = document.getElementById('overlay');
     const loadingView = document.getElementById('loadingView');
     const resultView = document.getElementById('resultView');
@@ -195,37 +286,23 @@
     const resultTitle = document.getElementById('resultTitle');
     const resultText = document.getElementById('resultText');
     const resultClose = document.getElementById('resultClose');
+    const errBox = document.getElementById('err');
 
-    const togglePassword = document.getElementById('togglePassword');
-    const eyeOpen = document.getElementById('eyeOpen');
-    const eyeClosed = document.getElementById('eyeClosed');
-
-    function showLoading(){ overlay.style.display='flex'; overlay.setAttribute('aria-hidden','false'); loadingView.style.display='flex'; resultView.style.display='none'; }
+    function showLoading(){ overlay.style.display='flex'; overlay.setAttribute('aria-hidden','false'); loadingView.style.display='flex'; resultView.style.display='none'; errBox.style.display='none'; }
     function showResult(success,title,message){ loadingView.style.display='none'; resultView.style.display='flex'; resultEmoji.textContent = success ? '✅' : '❌'; resultTitle.textContent = title; resultText.textContent = message; }
     function hideOverlay(){ overlay.style.display='none'; overlay.setAttribute('aria-hidden','true'); }
-    function overlaySequenceFailure(){ if(overlay.style.display!=='flex') overlay.style.display='flex'; overlay.setAttribute('aria-hidden','false'); }
+    function showError(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 
-    function redirectToClientDashboard(){ window.location.href = 'dashboard.html'; }
-    function redirectToTechDashboard(){ window.location.href = 'technician.html'; }
+    // safe localStorage set
+    function safeSetItem(k,v){ try { localStorage.setItem(k, v); } catch(e){} }
 
-    // helper: safe setter for localStorage
-    function safeSetItem(k,v){
-      try { localStorage.setItem(k, v); } catch(e) { /* ignore */ }
-    }
-
-    // password show/hide
-    togglePassword.addEventListener('click', () => {
-      const pw = document.getElementById('password');
-      if (pw.type === 'password') { pw.type = 'text'; eyeOpen.style.display='none'; eyeClosed.style.display='block'; }
-      else { pw.type = 'password'; eyeOpen.style.display='block'; eyeClosed.style.display='none'; }
-    });
-
-    // main submit
+    // login submit
     document.getElementById('submitBtn').addEventListener('click', async () => {
+      errBox.style.display='none';
       const identifier = document.getElementById('identifier').value.trim();
       const password = document.getElementById('password').value;
-      if(!identifier){ showLoading(); setTimeout(()=> showResult(false,'Login failed','Please enter your username, email or phone.'),300); return overlaySequenceFailure(); }
-      if(!password || password.length < 6){ showLoading(); setTimeout(()=> showResult(false,'Login failed','Password must be at least 6 characters.'),300); return overlaySequenceFailure(); }
+      if(!identifier){ showError('Please enter your username, email or phone.'); return; }
+      if(!password || password.length < 6){ showError('Password must be at least 6 characters.'); return; }
 
       showLoading();
       const payload = { login: identifier, password };
@@ -235,9 +312,7 @@
           method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), credentials:'include'
         });
 
-        const respText = await resp.text().catch(()=>null);
-        let data;
-        try { data = respText ? JSON.parse(respText) : null; } catch(e){ data = null; }
+        const data = await resp.json().catch(()=>null);
 
         if(!resp.ok){
           const serverMsg = data && data.message ? data.message : `HTTP ${resp.status}`;
@@ -246,51 +321,55 @@
         }
 
         if(data && data.success){
-          // Admin branch: backend returns role: 'admin'
-          if(data.role && data.role.toString().toLowerCase() === 'admin'){
-            safeSetItem('wc_is_admin', '1');
-            showResult(true,'Admin login successful', data.message || 'Redirecting to admin console...');
+          // store user locally (demo) if provided
+          if(data.user){
+            try { safeSetItem('th_user', JSON.stringify(data.user)); } catch(e){}
+            try { safeSetItem('th_user_role', data.role || data.user.role || 'client'); } catch(e){}
+          }
+
+          // handle redirects based on role
+          const role = (data.role || (data.user && data.user.role) || '').toString().toLowerCase();
+          if(role === 'admin'){
+            showResult(true,'Admin login', data.message || 'Redirecting to admin console...');
             setTimeout(()=> { hideOverlay(); window.location.href = 'Admin/admin.html'; }, 800);
             return;
           }
-
-          // Regular user branch
-          if(data.user){
-            try { safeSetItem('wc_user', JSON.stringify(data.user)); } catch(e){}
-            try { safeSetItem('userId', data.user.id); } catch(e){}
-            try { safeSetItem('userRole', data.role || (data.user.role || 'client')); } catch(e){}
-            if(data.token){ try{ safeSetItem('wc_token', data.token); } catch(e){} }
-
-            showResult(true,'Login successful', data.message || 'Redirecting...');
-            setTimeout(()=> {
-              hideOverlay();
-              const role = (data.role || (data.user && data.user.role) || '').toString().toLowerCase();
-              if(role === 'worker' || role === 'technician' || role === 'tech'){
-                redirectToTechDashboard();
-              } else if(role === 'staff' && data.redirect){
-                window.location.href = data.redirect;
-              } else {
-                redirectToClientDashboard();
-              }
-            }, 900);
+          if(role === 'worker' || role === 'technician' || role === 'tech'){
+            showResult(true,'Login successful', data.message || 'Redirecting to technician dashboard...');
+            setTimeout(()=> { hideOverlay(); window.location.href = 'technician.html'; }, 800);
+            return;
+          }
+          if(role === 'staff' && data.redirect){
+            showResult(true,'Login successful', 'Redirecting to staff console...');
+            setTimeout(()=> { hideOverlay(); window.location.href = data.redirect; }, 800);
             return;
           }
 
-          // fallback success
-          showResult(true, 'Login result', data.message || 'Login completed.');
-          setTimeout(()=> { hideOverlay(); }, 900);
+          showResult(true,'Login successful', data.message || 'Redirecting to dashboard...');
+          setTimeout(()=> { hideOverlay(); window.location.href = 'dashboard.html'; }, 800);
           return;
-        } else {
-          const msg = data && data.message ? data.message : 'Invalid credentials';
-          showResult(false,'Login failed', msg);
         }
+
+        const msg = (data && data.message) ? data.message : 'Invalid credentials';
+        showResult(false,'Login failed', msg);
       } catch(err){
-        console.error(err);
+        console.error('Login network error', err);
         showResult(false,'Login failed','Network error. Try again later.');
       }
     });
 
     resultClose.addEventListener('click', ()=> hideOverlay());
+
+    // Pressing Enter on form triggers login (except inside textareas)
+    document.getElementById('loginForm').addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){
+        const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+        if(tag !== 'textarea'){ e.preventDefault(); document.getElementById('submitBtn').click(); }
+      }
+    });
+
+    // initialize aria-pressed properly
+    (function syncAria(){ switchEl.setAttribute('aria-pressed', document.body.classList.contains('light') ? 'true' : 'false'); })();
   </script>
 </body>
 </html>
