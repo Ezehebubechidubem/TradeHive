@@ -3,187 +3,186 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>TradeHive — Register</title>
+  <title>TradeHive — Register </title>
+  <meta name="theme-color" content="#071014" id="metaThemeColor" />
   <style>
     :root{
-      --bg: #0b0b0b;
-      --card: #0f1724;
+      --bg-dark: #0b0b0b;
+      --card-dark: #0f1724;
+      --text-dark: #e6eef8;
+      --muted-dark: #94a3b8;
+      --border-dark: rgba(255,255,255,0.06);
+
+      --bg-light: #ffffff;
+      --card-light: #ffffff;
+      --text-light: #071014;
+      --muted-light: #6b7280;
+      --border-light: rgba(7,16,20,0.06);
+
       --gold1: #FFB703;
       --gold2: #F59E0B;
-      --muted: #94a3b8;
       --danger: #ef4444;
-      --btn-shadow: rgba(11,11,11,0.18);
+    }
+
+    /* Default: dark theme variables (used unless body.light is present) */
+    body {
+      --bg: var(--bg-dark);
+      --card: var(--card-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --border: var(--border-dark);
+      background: linear-gradient(180deg,#020202 0%, #070707 40%, var(--bg) 100%);
+      color: var(--text);
+      transition: background .18s ease, color .18s ease;
+    }
+
+    /* Light theme: override variables to pure-white theme */
+    body.light {
+      --bg: var(--bg-light);
+      --card: var(--card-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --border: var(--border-light);
+      background: var(--bg);
+      color: var(--text);
     }
 
     *{box-sizing:border-box}
-    html,body{height:100%; margin:0}
-    body{
-      font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
-      background: linear-gradient(180deg,#020202 0%, #070707 40%, #0b0b0b 100%);
-      color: #e6eef8;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
-    }
+    html,body{height:100%; margin:0; font-family:Inter, "Segoe UI", Roboto, Arial, sans-serif; -webkit-font-smoothing:antialiased;}
 
-    /* Full-bleed banner/header */
-    header.banner{
-      width:100%;
-      display:block;
-      box-shadow: 0 6px 30px rgba(0,0,0,0.6);
-      position:relative;
-      z-index:999;
+    /* banner */
+    header.banner{ position:relative; width:100%; box-shadow:0 6px 30px rgba(0,0,0,0.12); z-index:999; }
+    .banner-inner{ max-height:220px; overflow:hidden; position:relative; background:var(--card); }
+    .banner-inner img{ width:100%; height:auto; max-height:220px; object-fit:cover; display:block; filter:saturate(.98); }
+
+    /* Theme switch container (top-right of banner) */
+    .theme-toggle { position:absolute; right:12px; top:12px; z-index:1200; display:flex; align-items:center; gap:8px; }
+    .theme-switch {
+      display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px;
+      border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; font-weight:700;
+      box-shadow:0 6px 18px rgba(0,0,0,0.06);
     }
-    .banner .banner-inner {
-      width:100%;
-      max-height: 220px;
-      overflow:hidden;
-    }
-    .banner img{
-      width:100%;
-      height:auto;
-      display:block;
-      object-fit: cover;
-      max-height: 220px;
-      width:100vw;
-    }
+    .theme-switch:focus { outline:3px solid rgba(255,183,3,0.12); outline-offset:2px }
 
     /* container and card */
     .wrap{max-width:920px;margin:18px auto;padding:20px}
     main.card{
-      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      background:var(--card);
       border-radius:12px;
       padding:22px;
-      box-shadow: 0 10px 40px rgba(2,6,23,0.7);
-      border: 1px solid rgba(255,183,3,0.06);
+      border:1px solid var(--border);
+      box-shadow: 0 10px 40px rgba(2,6,23,0.06);
+      margin:-40px auto 0;
       max-width:920px;
-      margin: -40px auto 0; /* lifted slightly over banner */
     }
 
-    h2 { margin:0 0 8px 0; color:#e6eef8; font-size:22px; font-weight:800; }
+    h2 { margin:0 0 8px 0; color:var(--text); font-size:22px; font-weight:800; }
     p.lead { color:var(--muted); margin:4px 0 14px; font-size:14px }
 
     .row{display:flex;gap:12px}
     .col{flex:1; min-width:0}
 
-    label{display:block;font-size:13px;margin-bottom:6px;color:#e6eef8}
-    input[type="text"], input[type="email"], input[type="tel"], input[type="password"], select {
-      width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);font-size:14px;background:transparent;color:#e6eef8;box-sizing:border-box;
+    label{display:block;font-size:13px;margin-bottom:6px;color:var(--text)}
+    input, select {
+      width:100%; padding:12px; border-radius:10px; border:1px solid var(--border); font-size:14px;
+      background:transparent; color:var(--text); transition: border-color .14s ease, box-shadow .14s ease;
     }
-    input::placeholder{ color: rgba(230,238,248,0.28); }
+    input::placeholder{ color: rgba(0,0,0,0.22); }
+    input:focus { outline:0; border-color: rgba(255,183,3,0.22); box-shadow: 0 6px 18px rgba(255,183,3,0.06); }
+
+    /* For light mode ensure inputs remain white background for clarity */
+    body.light input, body.light select { background: #ffffff; color:var(--text); }
 
     .password-wrap{position:relative;display:flex;align-items:center}
-    .toggle-eye{
-      position:absolute;right:10px;cursor:pointer;font-weight:700;color:var(--muted);user-select:none;
-      display:flex;align-items:center;gap:6px;
-    }
-    .toggle-eye svg{width:20px;height:20px;display:block}
+    .toggle-eye{ position:absolute; right:10px; cursor:pointer; display:flex; align-items:center; gap:8px; color:var(--muted); }
+    .toggle-eye svg{ width:18px; height:18px; }
 
     .small{font-size:14px; color:var(--muted); font-weight:600}
-    .muted{color:var(--muted)}
     .note{font-size:13px;color:var(--muted);margin-top:8px}
 
-    /* GOLD BUTTON */
     .btn {
-      display:inline-flex; align-items:center; justify-content:center;
-      gap:8px;
-      padding:12px 18px;
-      border-radius:12px;
-      cursor:pointer;
-      font-weight:800;
-      font-size:15px;
-      color:#071014;
-      background: linear-gradient(180deg, var(--gold1), var(--gold2));
-      border: 2px solid #0b0b0b;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.45), inset 0 -8px 0 rgba(0,0,0,0.08);
-      text-decoration:none;
-      width:100%;
+      display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      padding:12px 18px; border-radius:12px; cursor:pointer; font-weight:800; font-size:15px;
+      color:#071014; background: linear-gradient(180deg,var(--gold1),var(--gold2)); border:2px solid transparent; width:100%;
     }
-
     .actions{display:flex;justify-content:center;gap:8px;align-items:center;margin-top:18px;}
-    .help{color:var(--danger);font-size:13px;margin-top:8px}
 
-    @media(max-width:820px){ .row{flex-direction:column} .wrap{padding:12px} main.card{margin-top:-20px;padding:16px} }
-
-    /* Overlay / modal */
-    .overlay{
-      position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-      background:rgba(2,6,23,0.75);z-index:1200;
-    }
-    .loader-card{
-      background:#061017;border-radius:12px;padding:22px 26px;display:flex;flex-direction:column;align-items:center;gap:12px;
-      box-shadow:0 18px 48px rgba(2,6,23,0.9);min-width:320px;text-align:center;border:1px solid rgba(255,255,255,0.03);
-    }
-    .spinner{
-      width:48px;height:48px;border-radius:50%;border:5px solid rgba(255,255,255,0.03);border-top-color:var(--gold1);animation:spin 1s linear infinite;
-    }
-    @keyframes spin{to{transform:rotate(360deg)}}
+    .overlay{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(2,6,23,0.75); z-index:1200; }
+    .loader-card{ background:var(--card); border-radius:12px; padding:22px 26px; display:flex; flex-direction:column; align-items:center; gap:12px; border:1px solid var(--border); min-width:320px; text-align:center; }
+    .spinner{ width:48px; height:48px; border-radius:50%; border:5px solid rgba(255,255,255,0.03); border-top-color:var(--gold1); animation:spin 1s linear infinite; }
+    @keyframes spin{ to{ transform:rotate(360deg) } }
 
     .result-emoji{font-size:36px}
-    .result-title{font-weight:800;margin-top:6px;color:#e6eef8}
-    .result-msg{color:#94a3b8;margin-top:6px;font-size:14px}
+    .result-title{font-weight:800;margin-top:6px;color:var(--text)}
+    .result-msg{color:var(--muted);margin-top:6px;font-size:14px}
     .result-close{margin-top:12px;padding:10px 14px;border-radius:10px;border:0;cursor:pointer;background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014;font-weight:800}
+
+    .error-text{color:var(--danger); font-weight:700; margin-top:8px; display:none}
+
+    @media(max-width:820px){ .row{flex-direction:column} .wrap{padding:12px} main.card{margin-top:-20px;padding:16px} }
   </style>
 </head>
 <body>
-  <!-- Full-width banner/header -->
   <header class="banner" role="banner" aria-label="TradeHive banner">
     <div class="banner-inner">
-      <!-- Use the image URL you provided -->
+      <!-- banner image -->
       <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive banner">
+      <div class="theme-toggle" aria-hidden="false">
+        <div id="themeSwitch" tabindex="0" role="button" aria-pressed="false" class="theme-switch" title="Toggle dark / light mode">
+          <span id="themeIcon" aria-hidden="true">🌙</span>
+          <span id="themeText">Dark</span>
+        </div>
+      </div>
     </div>
   </header>
 
   <div class="wrap" role="main">
     <main class="card" aria-labelledby="signupTitle">
       <h2 id="signupTitle">Create your TradeHive account</h2>
-      <p class="lead">Sign up to buy or sell products on TradeHive. Sellers can post ads later via "Sell Marketplace".</p>
+      <p class="lead">Sign up to buy or sell products on TradeHive.</p>
 
-      <form id="regForm" autocomplete="off" onsubmit="return false;" style="margin-top:8px">
-        <!-- Email + Phone -->
+      <form id="regForm" autocomplete="off" onsubmit="return false;">
         <div class="row">
           <div class="col">
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" placeholder="you@example.com" required />
+            <input id="email" type="email" placeholder="you@example.com" required />
           </div>
           <div class="col">
             <label for="phone">Phone number</label>
-            <input id="phone" name="phone" type="tel" placeholder="08012345678" maxlength="14" required />
+            <input id="phone" type="tel" placeholder="08012345678 or +2348012345678" required />
           </div>
         </div>
 
-        <!-- Full name + username -->
         <div class="row" style="margin-top:12px">
           <div class="col">
             <label for="fullname">Full name</label>
-            <input id="fullname" name="fullname" type="text" placeholder="John Okonkwo" required />
+            <input id="fullname" type="text" placeholder="John Okonkwo" required />
           </div>
           <div class="col">
             <label for="username">Username</label>
-            <input id="username" name="username" type="text" placeholder="john_oko" required />
+            <input id="username" type="text" placeholder="john_oko" required />
           </div>
         </div>
 
-        <!-- Location -->
         <div class="row" style="margin-top:12px">
           <div class="col">
             <label for="state">State / Region</label>
-            <input id="state" name="state" type="text" placeholder="Anambra" required />
+            <input id="state" type="text" placeholder="Anambra" required />
           </div>
           <div class="col">
             <label for="local">L.G.A</label>
-            <input id="local" name="local" type="text" placeholder="Onitsha South" required />
+            <input id="local" type="text" placeholder="Onitsha South" required />
           </div>
           <div class="col">
             <label for="city">Town / City</label>
-            <input id="city" name="city" type="text" placeholder="Onitsha" required />
+            <input id="city" type="text" placeholder="Onitsha" required />
           </div>
         </div>
 
-        <!-- Gender -->
         <div class="row" style="margin-top:12px">
           <div class="col">
             <label for="gender">Gender</label>
-            <select id="gender" name="gender">
+            <select id="gender">
               <option value="male">Male</option>
               <option value="female">Female</option>
               <option value="other">Other / Prefer not to say</option>
@@ -193,56 +192,45 @@
           <div class="col"></div>
         </div>
 
-        <!-- Password -->
         <div class="row" style="margin-top:12px">
           <div class="col">
             <label for="password">Password</label>
             <div class="password-wrap">
-              <input id="password" name="password" type="password" placeholder="Create a secure password" required />
-              <div id="togglePassword" class="toggle-eye" aria-hidden="true" title="Show / hide password">
-                <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--muted)">
-                  <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-                <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="display:none;color:var(--muted)">
-                  <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6 0-10-7-10-7"/>
-                  <path d="M1 1l22 22"/>
-                </svg>
+              <input id="password" type="password" placeholder="Create a secure password" required />
+              <div id="togglePassword" class="toggle-eye" role="button" tabindex="0" title="Show / hide password">
+                <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="display:none"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6 0-10-7-10-7"/><path d="M1 1l22 22"/></svg>
               </div>
             </div>
           </div>
           <div class="col"></div>
         </div>
 
-        <!-- Terms -->
         <div style="margin-top:12px">
           <label class="small">Terms</label>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <div style="display:flex;align-items:lemargin-top:2px;gap:2px;"></div>
             <input id="terms" type="checkbox" />
             <div style="color:var(--muted)">I agree to the <a href="#" style="color:var(--gold1);font-weight:700">TradeHive Terms &amp; Conditions</a> and privacy policy.</div>
           </div>
           <p class="note">Already have an account? <a style="color:var(--gold1);font-weight:700" href="login.html">Login here</a></p>
         </div>
 
-        <!-- Submit -->
         <div class="actions">
-          <button type="button" id="submitBtn" class="btn" aria-label="Create account">Create account</button>
+          <button id="submitBtn" class="btn" type="button">Create account</button>
         </div>
+        <div id="err" class="error-text" role="alert">Error message</div>
       </form>
     </main>
   </div>
 
-  <!-- Overlay for loading / result -->
   <div id="overlay" class="overlay" role="dialog" aria-modal="true" aria-hidden="true">
-    <div id="overlayCard" class="loader-card" role="document" aria-live="polite">
-      <!-- Loading view -->
+    <div class="loader-card" role="document" aria-live="polite">
       <div id="loadingView" style="display:flex;flex-direction:column;align-items:center;">
         <div class="spinner" aria-hidden="true"></div>
-        <div style="font-weight:800;color:#e6eef8">Processing registration…</div>
-        <div class="small muted">Please wait while we verify your details.</div>
+        <div style="font-weight:800;color:var(--text)">Processing registration…</div>
+        <div class="small" style="color:var(--muted)">Please wait while we verify your details.</div>
       </div>
 
-      <!-- Result view -->
       <div id="resultView" style="display:none;flex-direction:column;align-items:center;">
         <div class="result-emoji" id="resultEmoji">✅</div>
         <div class="result-title" id="resultTitle">Registration successful</div>
@@ -253,10 +241,66 @@
   </div>
 
   <script>
-    // Backend URL — update when ready
-    const API_ENDPOINT = 'https://wireconnet-1.onrender.com/api/register';
+    // Backend registration endpoint
+    const API_ENDPOINT = 'https://tradehive-s4e6.onrender.com/api/register';
 
-    // elements
+    // THEME handling
+    const THEME_KEY = 'tradehive_theme';
+    const switchEl = document.getElementById('themeSwitch');
+    const themeIcon = document.getElementById('themeIcon');
+    const themeText = document.getElementById('themeText');
+    const metaThemeColor = document.getElementById('metaThemeColor');
+
+    function setTheme(mode) {
+      if (mode === 'light') {
+        document.body.classList.add('light');
+        switchEl.setAttribute('aria-pressed','true');
+        themeIcon.textContent = '☀️';
+        themeText.textContent = 'Light';
+        metaThemeColor.setAttribute('content','#ffffff');
+      } else {
+        document.body.classList.remove('light');
+        switchEl.setAttribute('aria-pressed','false');
+        themeIcon.textContent = '🌙';
+        themeText.textContent = 'Dark';
+        metaThemeColor.setAttribute('content','#071014');
+      }
+      try { localStorage.setItem(THEME_KEY, mode); } catch(e){}
+    }
+
+    // Initialize theme: check localStorage -> prefers-color-scheme
+    (function initTheme(){
+      let saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch(e){}
+      if (saved === 'light' || saved === 'dark') {
+        setTheme(saved);
+      } else {
+        const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+        setTheme(prefersLight ? 'light' : 'dark');
+      }
+    })();
+
+    // Toggle handler (click + keyboard)
+    function toggleTheme(){
+      const isLight = document.body.classList.contains('light');
+      setTheme(isLight ? 'dark' : 'light');
+    }
+    switchEl.addEventListener('click', toggleTheme);
+    switchEl.addEventListener('keydown', (e)=> { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTheme(); } });
+
+    // Password toggle
+    const togglePw = document.getElementById('togglePassword');
+    const pw = document.getElementById('password');
+    const eyeOpen = document.getElementById('eyeOpen');
+    const eyeClosed = document.getElementById('eyeClosed');
+    function togglePassword(){
+      if (pw.type === 'password') { pw.type = 'text'; eyeOpen.style.display='none'; eyeClosed.style.display='block'; }
+      else { pw.type = 'password'; eyeOpen.style.display='block'; eyeClosed.style.display='none'; }
+    }
+    togglePw.addEventListener('click', togglePassword);
+    togglePw.addEventListener('keydown', (e)=> { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePassword(); } });
+
+    // Form handling
     const overlay = document.getElementById('overlay');
     const loadingView = document.getElementById('loadingView');
     const resultView = document.getElementById('resultView');
@@ -264,52 +308,19 @@
     const resultTitle = document.getElementById('resultTitle');
     const resultText = document.getElementById('resultText');
     const resultClose = document.getElementById('resultClose');
+    const errBox = document.getElementById('err');
 
-    // helpers
-    function showLoading(){
-      overlay.style.display = 'flex';
-      overlay.setAttribute('aria-hidden','false');
-      loadingView.style.display = 'flex';
-      resultView.style.display = 'none';
-    }
-    function showResult(success, title, message){
-      loadingView.style.display = 'none';
-      resultView.style.display = 'flex';
-      resultEmoji.textContent = success ? '✅' : '❌';
-      resultTitle.textContent = title;
-      resultText.textContent = message;
-    }
-    function hideOverlay(){
-      overlay.style.display = 'none';
-      overlay.setAttribute('aria-hidden','true');
-    }
+    function showLoading(){ overlay.style.display='flex'; overlay.setAttribute('aria-hidden','false'); loadingView.style.display='flex'; resultView.style.display='none'; errBox.style.display='none'; }
+    function showResult(success, title, msg){ loadingView.style.display='none'; resultView.style.display='flex'; resultEmoji.textContent = success ? '✅' : '❌'; resultTitle.textContent = title; resultText.textContent = msg; }
+    function hideOverlay(){ overlay.style.display='none'; overlay.setAttribute('aria-hidden','true'); }
 
-    // validation
-    function validEmail(email){ return /\S+@\S+\.\S+/.test(email); }
-    function validPhone(ph){
-      const cleaned = ph.replace(/\s+/g,'').replace(/\D/g,'');
-      return /^(?:\+234|0)?\d{10}$/.test(cleaned);
-    }
+    function showError(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 
-    // password toggle
-    const togglePassword = document.getElementById('togglePassword');
-    const eyeOpen = document.getElementById('eyeOpen');
-    const eyeClosed = document.getElementById('eyeClosed');
-    togglePassword && togglePassword.addEventListener('click', () => {
-      const pw = document.getElementById('password');
-      if (pw.type === 'password') {
-        pw.type = 'text';
-        if(eyeOpen) eyeOpen.style.display = 'none';
-        if(eyeClosed) eyeClosed.style.display = 'block';
-      } else {
-        pw.type = 'password';
-        if(eyeOpen) eyeOpen.style.display = 'block';
-        if(eyeClosed) eyeClosed.style.display = 'none';
-      }
-    });
+    function validEmail(e){ return /\S+@\S+\.\S+/.test(e); }
+    function validPhone(p){ if(!p) return false; const c = p.replace(/\s+/g,'').replace(/[^0-9+]/g,''); return /^(?:\+234|0)?\d{10,13}$/.test(c); }
 
-    // submit
-    document.getElementById('submitBtn').addEventListener('click', async () => {
+    document.getElementById('submitBtn').addEventListener('click', async ()=>{
+      errBox.style.display='none';
       const email = document.getElementById('email').value.trim();
       const phone = document.getElementById('phone').value.trim();
       const fullname = document.getElementById('fullname').value.trim();
@@ -321,86 +332,55 @@
       const password = document.getElementById('password').value;
       const terms = document.getElementById('terms').checked;
 
-      // client-side validation
-      if(!validEmail(email)){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Invalid email address.'), 300);
-        return;
-      }
-      if(!validPhone(phone)){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Invalid phone number. Use format 08012345678 or +234...'), 300);
-        return;
-      }
-      if(fullname.length < 3){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Please enter your full name.'), 300);
-        return;
-      }
-      if(username.length < 3){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Please choose a username (min 3 characters).'), 300);
-        return;
-      }
-      if(password.length < 6){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Password must be at least 6 characters.'), 300);
-        return;
-      }
-      if(!state || !city || !lga){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','Please provide state, L.G.A and city.'), 300);
-        return;
-      }
-      if(!terms){
-        showLoading();
-        setTimeout(()=> showResult(false,'Registration failed','You must agree to the terms & conditions.'), 300);
-        return;
-      }
+      if(!validEmail(email)){ showError('Invalid email address.'); return; }
+      if(!validPhone(phone)){ showError('Invalid phone. Use 08012345678 or +2348012345678.'); return; }
+      if(fullname.length < 3){ showError('Enter full name.'); return; }
+      if(username.length < 3){ showError('Choose username (min 3 chars).'); return; }
+      if(password.length < 6){ showError('Password must be at least 6 characters.'); return; }
+      if(!state || !lga || !city){ showError('Please provide state, L.G.A and city.'); return; }
+      if(!terms){ showError('You must agree to the terms & conditions.'); return; }
 
-      // show loader
+      const payload = { email, phone, fullname, username, state, lga, city, gender, password };
+
       showLoading();
-
-      // build payload (no role or category)
-      const payload = {
-        email,
-        phone,
-        fullname,
-        username,
-        state,
-        lga,
-        city,
-        gender,
-        password
-      };
-
       try {
         const resp = await fetch(API_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          credentials: 'include'
+          body: JSON.stringify(payload)
         });
-
-        const data = await resp.json().catch(()=>({ success:false, message:'Invalid server response' }));
+        const data = await resp.json().catch(()=>null);
 
         if(resp.ok && data && data.success){
           showResult(true, 'Registration successful', data.message || 'Account created. Redirecting to login...');
-          setTimeout(()=> {
-            hideOverlay();
-            window.location.href = 'login.html';
-          }, 1200);
-        } else {
-          showResult(false, 'Registration failed', data.message || 'Server rejected registration.');
+          setTimeout(()=> { hideOverlay(); window.location.href = 'login.html'; }, 1200);
+          return;
         }
-      } catch(err){
-        console.error('Network error', err);
-        showResult(false, 'Registration failed', 'Network error. Please try again later.');
+
+        const message = (data && data.message) ? data.message : `Server responded ${resp.status}`;
+        showResult(false, 'Registration failed', message);
+
+      } catch (err) {
+        console.error('Registration network error', err);
+        showResult(false, 'Registration failed', 'Network error — try again later.');
       }
     });
 
-    // close modal
     resultClose && resultClose.addEventListener('click', ()=> hideOverlay());
+
+    // Allow pressing Enter to submit (except inside textareas).
+    document.getElementById('regForm').addEventListener('keydown', (e)=> {
+      if(e.key === 'Enter') {
+        const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+        if(tag !== 'textarea'){ e.preventDefault(); document.getElementById('submitBtn').click(); }
+      }
+    });
+
+    // Keep aria-pressed in sync
+    (function syncAriaPressed(){
+      const isLight = document.body.classList.contains('light');
+      switchEl.setAttribute('aria-pressed', isLight ? 'true' : 'false');
+    })();
   </script>
 </body>
 </html>
