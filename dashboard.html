@@ -1,9 +1,9 @@
-<!doctype html>
+doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>TradeHive — App-style UI (Cart enabled, centered)</title>
+<title>TradeHive</title>
 <meta name="theme-color" content="#071014" />
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 
@@ -206,7 +206,7 @@
         <div class="mi-icon" aria-hidden="true">👤</div><div><strong>Profile</strong><div style="font-size:12px;color:var(--muted)">View and edit profile</div></div>
       </a>
 
-      <a class="menu-item" href="#" id="linkSell">
+      <a class="menu-item" href="sell.html" id="linkSell">
         <div class="mi-icon" aria-hidden="true">➕</div><div><strong>Sell Marketplace</strong><div style="font-size:12px;color:var(--muted)">Post new ad</div></div>
       </a>
 
@@ -215,11 +215,11 @@
       </a>
 
       <!-- DRAWER: My Cart (toggles cart modal) -->
-      <a class="menu-item" href="#" id="linkCart">
+      <a class="menu-item" href="ads.html" id="linkCart">
         <div class="mi-icon" aria-hidden="true">🛒</div><div><strong>My Cart</strong><div style="font-size:12px;color:var(--muted)">View cart & checkout</div></div>
       </a>
 
-      <a class="menu-item" href="#" id="linkAds">
+      <a class="menu-item" href="ads.html" id="linkAds">
         <div class="mi-icon" aria-hidden="true">📦</div><div><strong>My Ads</strong><div style="font-size:12px;color:var(--muted)">Active & expired ads</div></div>
       </a>
 
@@ -227,7 +227,7 @@
         <div class="mi-icon" aria-hidden="true">🏆</div><div><strong>Leaderboard</strong><div style="font-size:12px;color:var(--muted)">Top sellers & buyers</div></div>
       </a>
 
-      <a class="menu-item" href="#" id="linkKyc">
+      <a class="menu-item" href="kyc.html" id="linkKyc">
         <div class="mi-icon" aria-hidden="true">🔐</div><div><strong>KYC</strong><div style="font-size:12px;color:var(--muted)">Verify your identity</div></div>
       </a>
 
@@ -293,8 +293,7 @@
       </div>
     </div>
   </div>
-
-  <!-- product view modal (new) -->
+<!-- product view modal (new) -->
   <div class="view-backdrop" id="viewBackdrop" aria-hidden="true">
     <div class="view-modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
@@ -411,7 +410,7 @@
   <!-- bottom nav -->
   <nav class="bottom-nav" role="navigation" aria-label="Bottom navigation">
     <a href="#" class="nav-item active" data-page="home" id="navHome"><div class="ni-icon">🏠</div><div>Home</div></a>
-    <a href="#" class="nav-item" data-page="jobs" id="navJobs"><div class="ni-icon">🧰</div><div>My Ads</div></a>
+    <a href="ads.html" class="nav-item" data-page="jobs" id="navJobs"><div class="ni-icon">🧰</div><div>My Ads</div></a>
     <div style="width:68px"></div>
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
@@ -547,7 +546,9 @@ catEls.forEach(c=> c.addEventListener('click', ()=>{
 buildSubcats('All');
 
 /* ---------------------------
-  PRODUCTS (real images included)
+  PRODUCTS fallback (demo items)
+   - will be used only when backend is unreachable or returns empty
+   - keep this identical to previous content (temporary items)
    --------------------------- */
 const PRODUCTS = [
   { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
@@ -577,21 +578,111 @@ const PRODUCTS = [
 ];
 
 /* ---------------------------
-  Render products
+  Load ads from backend when available
+  - If backend returns ads (array), use them instead of PRODUCTS.
+  - If backend unreachable or empty list, fall back to PRODUCTS (temporary).
+  --------------------------- */
+const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com'; // your backend
+let BACKEND_AVAILABLE = false;
+let BACKEND_ADS = null; // null => not yet fetched, [] empty means backend returned none
+
+async function tryFetchBackendAds(timeoutMs = 5000) {
+  // attempt to fetch /api/ads?status=live
+  const controller = new AbortController();
+  const id = setTimeout(()=> controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(BACKEND_BASE + '/api/ads?status=live', { signal: controller.signal });
+    clearTimeout(id);
+    if(!res.ok) {
+      console.warn('Backend /api/ads responded with', res.status);
+      BACKEND_AVAILABLE = false;
+      BACKEND_ADS = null;
+      return null;
+    }
+    const json = await res.json().catch(()=>null);
+    if(!json || !json.success || !Array.isArray(json.ads)) {
+      // some backends might return array directly; try fallback
+      if(Array.isArray(json)) {
+        BACKEND_ADS = json;
+        BACKEND_AVAILABLE = true;
+        return json;
+      }
+      console.warn('Unexpected backend ads shape', json);
+      BACKEND_AVAILABLE = false;
+      BACKEND_ADS = null;
+      return null;
+    }
+    BACKEND_ADS = json.ads;
+    BACKEND_AVAILABLE = true;
+    return json.ads;
+  } catch (err) {
+    clearTimeout(id);
+    console.warn('Could not reach backend for ads', err && err.message ? err.message : err);
+    BACKEND_AVAILABLE = false;
+    BACKEND_ADS = null;
+    return null;
+  }
+}
+
+/* helper: map backend ad row -> UI product shape */
+function mapBackendAdToProduct(a) {
+  // a may contain: id, seller_id, title, description, images (text[]), price, currency, quantity, location, category, subcategory, status
+const images = (a.images && Array.isArray(a.images) && a.images.length) ? a.images.slice() : [];
+  // If images are stored as json string or single string, try to handle
+  if(!images.length && a.images && typeof a.images === 'string') {
+    try {
+      const parsed = JSON.parse(a.images);
+      if(Array.isArray(parsed)) images.push(...parsed);
+    } catch(e){}
+    // if still not, use the string as a single URL
+    if(!images.length) images.push(a.images);
+  }
+  // fallback image placeholder
+  if(!images.length) images.push('https://i.postimg.cc/3x3z0XgY/pastry1.jpg');
+
+  return {
+    id: String(a.id || a.ad_id || a._id || ('ad_' + Math.random().toString(36).slice(2,9))),
+    title: a.title || a.name || 'Untitled',
+    desc: a.description || a.desc || '',
+    images,
+    price: Number(a.price || a.amount || 0),
+    qty: Number(a.quantity || a.qty || 1),
+    loc: a.location || a.city || '',
+    live: String(a.status || '').toLowerCase() === 'live' || String(a.status || '').toLowerCase() === 'active',
+    seller_online: true,
+    category: a.category || a.category_name || 'Other',
+    sub: a.subcategory || a.sub || 'All'
+  };
+}
+
+/* ---------------------------
+  Render products (uses backend ads if present, otherwise fallback PRODUCTS)
    --------------------------- */
 const productsRoot = document.getElementById('products');
-function renderProducts(){
+async function renderProducts(){
   productsRoot.innerHTML = '';
+
+  // Determine active filters
   const activeCat = document.querySelector('.cat.active').dataset.cat;
   const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
 
-  const list = PRODUCTS.filter(p=>{
+  // If backend available and returned ads, map them
+  let list = [];
+  if(BACKEND_AVAILABLE && Array.isArray(BACKEND_ADS)) {
+    list = BACKEND_ADS.map(mapBackendAdToProduct);
+  } else {
+    list = PRODUCTS.slice(); // copy demo
+  }
+
+  // Filter using active cat/sub
+  const filtered = list.filter(p=>{
     if(activeCat !== 'All' && p.category !== activeCat) return false;
     if(activeSub !== 'All' && p.sub !== activeSub) return false;
     return true;
   });
 
-  list.forEach(p=>{
+  // render each product (exact same DOM structure as before)
+  filtered.forEach(p=>{
     const el = document.createElement('article'); el.className='product';
     el.innerHTML = `
       <div class="media" role="button" tabindex="0" data-id="${p.id}">
@@ -607,11 +698,12 @@ function renderProducts(){
       </div>
     `;
     productsRoot.appendChild(el);
-// image click -> open view modal
+
+    // image click -> open view modal
     el.querySelector('.media').addEventListener('click', ()=> openViewModal(p));
     el.querySelector('.media').addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') openViewModal(p); });
 
-    // handlers
+// handlers
     el.querySelector('.addBtn').addEventListener('click', ()=>{
       const q = parseInt(el.querySelector('.qty').value || '1');
       addToCart(p, q, true);
@@ -619,10 +711,32 @@ function renderProducts(){
     el.querySelector('.viewBtn').addEventListener('click', ()=>{ openViewModal(p); });
   });
 }
-renderProducts();
+
+/* Try to load backend ads on startup; fallback to PRODUCTS if unreachable.
+   We fetch once immediately; you can call refreshAds() later if you want.
+*/
+async function loadAdsOnStart() {
+  // Attempt to fetch backend ads; if success and returns non-empty array - use it.
+  const ads = await tryFetchBackendAds(5000);
+  if(ads && Array.isArray(ads) && ads.length>0){
+    // backend available and returned ads => render using backend
+    console.info('Using backend ads (%d) — demo items hidden', ads.length);
+  } else {
+    console.info('Using local demo PRODUCTS (backend not available or empty)');
+  }
+  renderProducts();
+}
+// expose a function to refresh ads from backend (optional)
+async function refreshAds(){
+  await tryFetchBackendAds(5000);
+  renderProducts();
+}
+
+loadAdsOnStart();
 
 /* ---------------------------
   Cart functions
+   (unchanged behavior, re-used)
    --------------------------- */
 function addToCart(product, qty, showConfirm=false){
   const cart = readCart();
@@ -705,9 +819,10 @@ document.getElementById('openCartTop').addEventListener('click', (e)=>{
   toggleCart(false);
 });
 
-// Drawer cart toggle (closes drawer when opening)
+// Drawer cart toggle (closes drawer when opening) - changed to just open cart modal but link points to ads.html
 document.getElementById('linkCart').addEventListener('click', (e)=>{
   e.preventDefault();
+  // keep previous UX: toggle centered cart, but user asked My Ads to go to ads.html - link already points to ads.html
   toggleCart(true);
 });
 
@@ -744,7 +859,6 @@ document.getElementById('confirmCancel').addEventListener('click', ()=>{
   document.getElementById('confirmBackdrop').style.display='none';
   showToast('Item kept in cart.');
 });
-
 /* ---------------------------
   Product VIEW modal (details + gallery)
    --------------------------- */
@@ -814,10 +928,20 @@ backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(
 function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
 function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
 
-/* quick link demo behaviors */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ e.preventDefault(); alert('Open Sell Marketplace (post ad) — implement form separately.'); closeDrawer(); });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); alert('My Ads page — implement separately.'); closeDrawer(); });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); alert('Profile page (demo).'); closeDrawer(); });
+/* quick link behaviors changed to navigation targets requested by you */
+document.getElementById('linkSell').addEventListener('click', (e)=>{ /* link already points to sell.html, but also support click here */ closeDrawer(); window.location.href = 'sell.html'; });
+document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
+document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); /* keep same behavior (open) */ });
+
+/* KYC link navigates to kyc.html */
+document.getElementById('linkKyc').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'kyc.html'; });
+
+/* bottom nav behaviors adjusted:
+   - Jobs (My Ads) -> ads.html
+   - FAB -> sell.html
+*/
+document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'ads.html'; });
+document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'sell.html'; });
 
 /* Logout example */
 document.getElementById('linkLogout').addEventListener('click', (e)=>{
@@ -834,7 +958,6 @@ function showToast(msg, ms=2200){
   clearTimeout(showToast._t);
   showToast._t = setTimeout(()=> t.style.display='none', ms);
 }
-
 /* On first load: demo user */
 if(!readUser()){
   writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
@@ -856,20 +979,6 @@ document.addEventListener('keydown', (e)=>{
     cartBackdrop.style.display = 'none';
   }
 });
-
-/* ---------------------------
-  Bottom nav & FAB handlers
-   --------------------------- */
-function setActiveNav(id){
-  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
-  if(id) document.getElementById(id).classList.add('active');
-}
-document.getElementById('navHome').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navHome'); window.scrollTo({top:0,behavior:'smooth'}); });
-document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navJobs'); showToast('Ads (demo)'); });
-document.getElementById('navMessages').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navMessages'); showToast('Notifications (demo)'); });
-document.getElementById('navProfile').addEventListener('click',(e)=>{ e.preventDefault(); setActiveNav('navProfile'); openDrawer(); });
-
-document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); document.getElementById('linkSell').click(); });
 
 /* storage changes from other tabs */
 window.addEventListener('storage', (e)=>{
