@@ -193,9 +193,13 @@ if (REDIS_URL) {
 /////////////////////////////////////////////////////////////////////
 // DB and storage setup (Postgres, migrations)
 /////////////////////////////////////////////////////////////////////
+const { Pool } = require('pg');
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized:false } : false
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 // ---------- LOCAL DISK STORAGE fallback ----------
