@@ -21,7 +21,6 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
-const { Pool } = require('pg');
 const fetch = global.fetch || require('node-fetch'); // node 18+ has fetch, otherwise install node-fetch
 const crypto = require('crypto');
 const multer = require('multer');
