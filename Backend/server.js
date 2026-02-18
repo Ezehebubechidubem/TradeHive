@@ -80,6 +80,20 @@ app.use(limiter);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '12mb' })); // allow some room for base64 if needed
 
+// GLOBAL ERROR LOGGER (TEMPORARY)
+app.use((err, req, res, next) => {
+  console.error("🔥 GLOBAL ERROR CAUGHT:");
+  console.error("Message:", err.message);
+  console.error("Stack:", err.stack);
+  console.error("Body:", req.body);
+
+  res.status(500).json({
+    success: false,
+    message: err.message,
+    stack: err.stack,
+  });
+});
+
 /////////////////////////////////////////////////////////////////////
 // Prometheus metrics
 /////////////////////////////////////////////////////////////////////
