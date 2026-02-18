@@ -795,22 +795,12 @@ app.post('/api/ads', async (req, res) => {
 });
 
 app.get('/pay/ad-callback', async (req, res) => {
-  const reference = req.query.reference || req.query.trxref;
-
-  if (!reference) {
-    return res.send('No payment reference received');
-  }
+  console.log('Callback query:', req.query);
 
   res.send(`
-    <h1>Payment Received</h1>
-    <p>Reference: ${reference}</p>
+    <h2>Callback Received</h2>
+    <pre>${JSON.stringify(req.query, null, 2)}</pre>
   `);
-});
-
-  } catch (err) {
-    console.error('Callback error:', err);
-    res.status(500).send('Something went wrong');
-  }
 });
 
 // GET /api/ads - list ads (live only by default)
