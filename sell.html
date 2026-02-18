@@ -342,11 +342,17 @@ postBtn.addEventListener('click', async () => {
     if (resp.ok && data && data.success) {
       postStatus.textContent = 'Ad created';
       // If provider requires payment, open authorization URL
-      if (data.init && data.init.data && data.init.data.authorization_url) {
-        const url = data.init.data.authorization_url;
-        if (confirm('Posting requires a fee. Open payment page now?')) window.open(url, '_blank');
+      if (data.init && data.init.data && (data.init.data.authorization_url || data.init.data.link)) {
+        // prefer provider-specific link (flutterwave uses data.link), fallback to authorization_url
+        const url = data.init.data.link || data.init.data.authorization_url;
+        if (confirm('Posting requires a fee. Open payment page now?')) {
+          // use full-page redirect to avoid popup blocking and beforeunload issues
+          window.location.href = url;
+        }
       } else if (data.init && data.init.url) {
-        if (confirm('Open payment page now?')) window.open(data.init.url, '_blank');
+        if (confirm('Open payment page now?')) {
+          window.location.href = data.init.url;
+        }
       } else {
         alert('Ad posted. Check My Ads for status.');
         window.location.href = 'ads.html';
