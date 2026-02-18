@@ -923,11 +923,18 @@ app.post('/debug/ads/validate', express.json({ limit: '10mb' }), async (req, res
 
     const ok = errors.length === 0 && imageChecks.every(ic => ic.ok !== false);
     return res.json({ success: true, validated: ok, errors, imageChecks, payloadSummary: { seller_id: body.seller_id, title: String(body.title || '').slice(0,160), imagesCount: images.length } });
-  } catch (err) {
-    console.error('DEBUG /debug/ads/validate error', err);
-    return res.status(500).json({ success: false, message: 'internal', error: String(err && err.stack) });
-  }
-});
+  catch (err) {
+  console.error('🔥 FULL /api/ads/validate ERROR:', err);
+
+  return res.status(500).json({
+    success:false,
+    message: err.message,
+    detail: err.detail,
+    code: err.code,
+    constraint: err.constraint,
+    stack: err.stack
+  });
+}
 
 app.post('/debug/ads/dryrun', express.json({ limit: '12mb' }), async (req, res) => {
   // This will BEGIN a transaction, try insert, then ROLLBACK.
@@ -999,6 +1006,47 @@ app.post('/debug/ads/dryrun', express.json({ limit: '12mb' }), async (req, res) 
     client.release();
   }
 });
+app.post('/debug/check-seller', async (req, res) => {
+  try {
+    if (process.env.DEBUG_KEY && req.headers['x-debug-key'] !== process.env.DEBUG_KEY) {
+      return res.status(403).json({ success:false, message:'forbidden' });
+    }
+
+    const { seller_id } = req.body || {};
+    if (!seller_id) {
+      return res.json({ success:false, message:'seller_id required' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        'SELECT id, email, username FROM users WHERE id=$1 LIMIT 1',
+        [seller_id]
+      );
+
+      if (!r.rows.length) {
+        return res.json({
+          success:true,
+          exists:false,
+          message:'Seller does NOT exist (THIS WILL CAUSE 500)'
+        });
+      }
+
+      return res.json({
+        success:true,
+        exists:true,
+        seller:r.rows[0]
+      });
+    } finally {
+      client.release();
+    }
+
+  } catch (err) {
+    console.error('check-seller error', err);
+    return res.status(500).json({ success:false, error: err.message });
+  }
+});
+
 // Seller endpoint to release goods for an order (seller triggers release after buyer paid)
 // POST /api/orders/:id/release
 app.post('/api/orders/:id/release', async (req, res) => {
