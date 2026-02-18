@@ -795,12 +795,42 @@ app.post('/api/ads', async (req, res) => {
 });
 
 app.get('/pay/ad-callback', async (req, res) => {
-  console.log('Callback query:', req.query);
+  console.log('Flutterwave callback query:', req.query);
 
-  res.send(`
-    <h2>Callback Received</h2>
-    <pre>${JSON.stringify(req.query, null, 2)}</pre>
-  `);
+  const { status, tx_ref, transaction_id } = req.query;
+
+  if (!status) {
+    return res.send('No payment status received.');
+  }
+
+  if (status !== 'successful') {
+    return res.send('Payment not successful.');
+  }
+
+  // IMPORTANT: Verify payment with Flutterwave server
+  try {
+    const verifyRes = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
+      headers: {
+        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`
+      }
+    });
+
+    const verifyData = await verifyRes.json();
+
+    if (verifyData.status === 'success') {
+      // Payment verified
+      res.send(`
+        <h2>Payment Successful 🎉</h2>
+        <p>Your ad will go live shortly.</p>
+      `);
+    } else {
+      res.send('Verification failed.');
+    }
+
+  } catch (err) {
+    console.error('Verification error:', err);
+    res.status(500).send('Server verification error.');
+  }
 });
 
 // GET /api/ads - list ads (live only by default)
