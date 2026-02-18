@@ -852,6 +852,139 @@ app.post('/api/ads/:id/buy', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
+// --- DEBUG ROUTES (temporary) ---
+// Protect these with a secret DEBUG_KEY in env. Remove after debugging.
+app.post('/debug/ads/validate', express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const expectedKey = process.env.DEBUG_KEY || null;
+    if (expectedKey && req.headers['x-debug-key'] !== expectedKey) {
+      return res.status(403).json({ success: false, message: 'forbidden - invalid debug key' });
+    }
+
+    const body = req.body || {};
+    const errors = [];
+    // Basic required fields
+    if (!body.seller_id && body.seller_id !== 0) errors.push('seller_id missing');
+    if (!body.title || String(body.title).trim() === '') errors.push('title missing or empty');
+    if (body.price === undefined || body.price === null || Number.isNaN(Number(body.price))) errors.push('price missing or not a number');
+    if (body.quantity === undefined || body.quantity === null || Number.isNaN(Number(body.quantity))) errors.push('quantity missing or not a number');
+
+    // Images: should be array of data URLs OR array of URLs
+    const images = Array.isArray(body.images) ? body.images : [];
+    if (images.length > 6) errors.push('images: more than 6 provided');
+
+    // Validate image data-URL syntax and try a small decode to ensure base64 valid
+    const imageChecks = [];
+    for (let i = 0; i < images.length; ++i) {
+      const iv = images[i];
+      if (typeof iv !== 'string') {
+        imageChecks.push({ index: i, ok: false, message: 'not a string' });
+        continue;
+      }
+      // If looks like data-url
+      const m = iv.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!m) {
+        // not a data URL — accept as URL but mark as URL
+        imageChecks.push({ index: i, ok: true, type: 'url', note: 'not base64 data URL' });
+        continue;
+      }
+      const mime = m[1];
+      const b64 = m[2];
+      // quick base64 decode check (small slice)
+      try {
+        const buf = Buffer.from(b64, 'base64');
+        // check we got some bytes and first bytes match JPEG/PNG magic bytes (optional)
+        let magic = null;
+        if (buf.length >= 4) {
+          const h = buf.slice(0, 4).toString('hex').toLowerCase();
+          if (h.startsWith('ffd8')) magic = 'jpeg';
+          else if (h.startsWith('89504e47')) magic = 'png';
+          else magic = 'unknown';
+        }
+        imageChecks.push({ index: i, ok: true, mime, size: buf.length, magic });
+      } catch (err) {
+        imageChecks.push({ index: i, ok: false, message: 'base64 decode failed', error: String(err && err.message) });
+      }
+    }
+
+    const ok = errors.length === 0 && imageChecks.every(ic => ic.ok !== false);
+    return res.json({ success: true, validated: ok, errors, imageChecks, payloadSummary: { seller_id: body.seller_id, title: String(body.title || '').slice(0,160), imagesCount: images.length } });
+  } catch (err) {
+    console.error('DEBUG /debug/ads/validate error', err);
+    return res.status(500).json({ success: false, message: 'internal', error: String(err && err.stack) });
+  }
+});
+
+app.post('/debug/ads/dryrun', express.json({ limit: '12mb' }), async (req, res) => {
+  // This will BEGIN a transaction, try insert, then ROLLBACK.
+  // It reveals DB constraint / FK / type errors without saving data.
+  const expectedKey = process.env.DEBUG_KEY || null;
+  if (expectedKey && req.headers['x-debug-key'] !== expectedKey) {
+    return res.status(403).json({ success: false, message: 'forbidden - invalid debug key' });
+  }
+
+  const body = req.body || {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // create a safe ad id for testing
+    const debugAdId = uid();
+    // Try the same insert you use in production (adjust columns if your real insert differs)
+    const insertAdSql = `INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status, created_at)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now()) RETURNING *`;
+    const imagesValue = Array.isArray(body.images) ? body.images : [];
+    const insertVals = [
+      debugAdId,
+      body.seller_id || null,
+      body.title || '',
+      body.description || '',
+      imagesValue,
+      body.price || 0,
+      body.currency || 'NGN',
+      body.quantity || 1,
+      body.location || '',
+      body.category || '',
+      body.subcategory || '',
+      'pending_payment'
+    ];
+
+    // Attempt insert
+    const insertRes = await client.query(insertAdSql, insertVals);
+
+    // Optionally create a payments row to simulate ad fee (safe to rollback)
+    const debugPaymentId = uid();
+    const insertPaymentSql = `INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, meta, created_at)
+                              VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now()) RETURNING *`;
+    const paymentVals = [
+      debugPaymentId,
+      debugAdId,
+      body.seller_id || null,
+      process.env.PAYMENT_PROVIDER || PAYMENT_PROVIDER,
+      Number(process.env.AD_FEE_NGN || 1000),
+      body.currency || 'NGN',
+      'initiated',
+      JSON.stringify({ debug:true, source:'dryrun' })
+    ];
+    const payRes = await client.query(insertPaymentSql, paymentVals);
+
+    // Instead of COMMIT, rollback to keep DB clean
+    await client.query('ROLLBACK');
+
+    return res.json({
+      success: true,
+      message: 'dryrun OK (rolled back)',
+      insertedAd: insertRes.rows && insertRes.rows[0] ? insertRes.rows[0] : null,
+      insertedPayment: payRes.rows && payRes.rows[0] ? payRes.rows[0] : null
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('DEBUG /debug/ads/dryrun error', err);
+    // Return full stack so you can see the exact DB error (only available with debug key)
+    return res.status(500).json({ success: false, message: 'dryrun-failed', error: String(err && err.stack || err) });
+  } finally {
+    client.release();
+  }
+});
 // Seller endpoint to release goods for an order (seller triggers release after buyer paid)
 // POST /api/orders/:id/release
 app.post('/api/orders/:id/release', async (req, res) => {
