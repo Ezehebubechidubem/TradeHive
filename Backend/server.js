@@ -794,37 +794,18 @@ app.post('/api/ads', async (req, res) => {
   }
 });
 
-// Payment redirect callback (after user completes payment)
 app.get('/pay/ad-callback', async (req, res) => {
-  try {
-    const { reference } = req.query;
+  const reference = req.query.reference || req.query.trxref;
 
-    if (!reference) {
-      return res.status(400).send('Payment reference missing');
-    }
+  if (!reference) {
+    return res.send('No payment reference received');
+  }
 
-    // Here you should verify payment with your provider
-    // (Paystack or Flutterwave)
-    // Example pseudo:
-    // const verify = await verifyPayment(reference);
-
-    // For now just show success page
-    res.send(`
-      <html>
-        <head>
-          <title>Payment Successful</title>
-          <style>
-            body { font-family: Arial; text-align:center; padding-top:100px; }
-            h1 { color: green; }
-          </style>
-        </head>
-        <body>
-          <h1>Payment Received 🎉</h1>
-          <p>Your ad is being processed.</p>
-          <a href="/">Go back to homepage</a>
-        </body>
-      </html>
-    `);
+  res.send(`
+    <h1>Payment Received</h1>
+    <p>Reference: ${reference}</p>
+  `);
+});
 
   } catch (err) {
     console.error('Callback error:', err);
