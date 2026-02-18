@@ -4,59 +4,23 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>TradeHive — Admin — Ads Verify</title>
-<meta name="theme-color" content="#071014" />
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 <style>
   :root{
-    --bg: #ffffff;
-    --card: #ffffff;
-    --text: #071014;
-    --muted: #6b7280;
-    --border: rgba(7,16,20,0.06);
-    --gold1: #FFB703;
-    --gold2: #F59E0B;
-    --shadow: rgba(2,6,23,0.06);
+    --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
+    --border:rgba(7,16,20,0.06); --gold1:#FFB703; --gold2:#F59E0B;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;font-family:Inter, Roboto, Arial, sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-  a{color:inherit}
   .wrap{max-width:1100px;margin:18px auto;padding:16px}
-  header.banner{
-    width:100%;
-    display:block;
-    box-shadow: 0 6px 30px rgba(0,0,0,0.12);
-    position:relative;
-    z-index:999;
-  }
-  .banner .banner-inner {
-    width:100%;
-    max-height: 110px;
-    overflow:hidden;
-  }
-  .banner img{
-    width:100%;
-    height:60%;
-    display:block;
-    object-fit: cover;
-    max-height: 110px;
-    width:100vw;
-  }
-  main.card{
-    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-    border-radius:12px;
-    padding:18px;
-    box-shadow: 0 10px 40px var(--shadow);
-    border: 1px solid var(--border);
-    max-width:1100px;
-    margin-top:-40px;
-  }
-
-  .top-row{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+  header.banner{box-shadow:0 6px 30px rgba(0,0,0,0.12);position:relative;z-index:999}
+  .banner-inner{max-height:110px;overflow:hidden}
+  .banner img{width:100%;height:60%;object-fit:cover;max-height:110px;width:100vw;display:block}
+  main.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:18px;box-shadow:0 10px 40px rgba(2,6,23,0.06);border:1px solid var(--border);margin-top:-40px}
+  .top-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .title{font-size:20px;font-weight:900;margin:0}
   .small-muted{font-size:13px;color:var(--muted)}
-
-  /* layout */
-  .grid{display:grid;grid-template-columns: 1fr 340px; gap:16px}
+  .grid{display:grid;grid-template-columns:1fr 340px;gap:16px}
   .list{display:flex;flex-direction:column;gap:12px}
   .ad-card{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--border);display:flex;gap:12px;align-items:flex-start}
   .ad-media{width:160px;height:120px;border-radius:8px;overflow:hidden;background:#f2f2f2;flex:0 0 160px}
@@ -71,27 +35,20 @@
   .btn.decline{background:#f3f4f6;color:#071014;border:1px solid var(--border)}
   .btn.view{background:transparent;border:1px dashed var(--border);color:var(--muted)}
   .badge{padding:6px 8px;border-radius:999px;font-weight:800;background:#f8fafc;border:1px solid var(--border);font-size:12px}
-
-  /* right column */
   .panel{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--border);display:flex;flex-direction:column;gap:10px}
-  .panel h4{margin:0;font-size:14px}
-  .log{background:#0b1220;color:#fff;padding:10px;border-radius:8px;font-family:monospace;font-size:12px;max-height:360px;overflow:auto}
-
-  /* modal */
   .modal-backdrop{position:fixed;inset:0;display:none;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:2000}
-  .modal{width:94%;max-width:880px;background:var(--card);border-radius:12px;padding:14px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow:auto}
+  .modal{width:94%;max-width:880px;background:var(--card);border-radius:12px;padding:14px;max-height:90vh;overflow:auto}
   .modal-gallery{display:flex;gap:8px;flex-wrap:wrap}
   .modal-gallery img{width:180px;height:120px;object-fit:cover;border-radius:8px}
-
   @media (max-width:980px){
-    .grid{grid-template-columns: 1fr; }
+    .grid{grid-template-columns:1fr}
     .ad-media{width:120px;height:90px}
     .modal-gallery img{width:120px;height:80px}
   }
 </style>
 </head>
 <body>
-  <header class="banner" role="banner" aria-label="TradeHive banner">
+  <header class="banner" role="banner">
     <div class="banner-inner">
       <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive banner">
     </div>
@@ -102,13 +59,11 @@
       <div class="top-row">
         <div>
           <h1 id="adminTitle" class="title">Ads — Pending Approval</h1>
-          <div class="small-muted">Review and approve or decline ads before they go live.</div>
+          <div class="small-muted">Review ads and approve or decline.</div>
         </div>
-
         <div style="display:flex;gap:8px;align-items:center">
-          <label class="small-muted" for="refreshInterval">Auto-refresh</label>
           <select id="refreshInterval" style="padding:6px;border-radius:8px;border:1px solid var(--border)">
-            <option value="0">Off</option>
+            <option value="0">Auto-refresh off</option>
             <option value="10">10s</option>
             <option value="30">30s</option>
             <option value="60">60s</option>
@@ -125,41 +80,24 @@
             <button id="clearBtn" class="btn view">Clear</button>
           </div>
 
-          <div id="list" class="list" aria-live="polite">
-            <!-- ad entries injected here -->
-          </div>
-
+          <div id="list" class="list" aria-live="polite"></div>
           <div id="empty" class="small-muted" style="display:none;margin-top:10px">No pending ads.</div>
         </div>
 
         <aside class="panel" aria-label="Admin panel">
           <div>
-            <h4>Selected ad</h4>
-            <div id="selectedInfo" class="small-muted">No ad selected</div>
+            <h4 style="margin:0">Selected ad</h4>
+            <div id="selectedInfo" class="small-muted">None selected</div>
           </div>
-
           <div>
-            <h4>Creator / Seller</h4>
-            <div id="sellerInfo" class="small-muted">Select an ad to see seller details</div>
-            <div style="height:8px"></div>
-            <button id="loadSellerBtn" class="btn view" style="width:100%">Load seller (if available)</button>
-          </div>
-
-          <div>
-            <h4>Admin log</h4>
-            <div id="adminLog" class="log">Ready.</div>
-          </div>
-
-          <div>
-            <h4>Notes</h4>
-            <div class="small-muted">This page calls <code>GET /api/ads?status=pending_payment</code> to load pending ads. Approve/Decline tries admin endpoints and PATCH fallback; check responses in log.</div>
+            <h4 style="margin:0">Creator</h4>
+            <div id="sellerInfo" class="small-muted">Seller id shown on selection</div>
           </div>
         </aside>
       </div>
     </main>
   </div>
 
-  <!-- modal -->
   <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -174,97 +112,70 @@
       <div id="modalDesc" class="small-muted"></div>
       <div style="height:8px"></div>
       <div class="modal-gallery" id="modalGallery"></div>
-      <div style="height:8px"></div>
-      <div id="modalExtra" class="small-muted"></div>
+      <div style="height:12px"></div>
+      <div style="display:flex;gap:8px">
+        <button id="modalApprove" class="btn approve">Approve</button>
+        <button id="modalDecline" class="btn decline">Decline</button>
+      </div>
     </div>
   </div>
 
 <script>
-/*
- admin/adsverify.html
- - Fetch pending ads: GET /api/ads?status=pending_payment
- - Show ad list
- - View details modal
- - Approve / Decline: attempt admin endpoints, fallback to PATCH /api/ads/:id
- - Try to fetch seller details via GET /api/users/:id if available
- - Log server responses in admin log
-*/
-
-const BACKEND = (function(){ return location.origin; })(); // default to same origin; replace if needed
-const LIST_URL = BACKEND + '/api/ads?status=pending_payment';
-const listEl = document.getElementById('list');
-const emptyEl = document.getElementById('empty');
-const adminLog = document.getElementById('adminLog');
-const selectedInfo = document.getElementById('selectedInfo');
-const sellerInfo = document.getElementById('sellerInfo');
-const loadSellerBtn = document.getElementById('loadSellerBtn');
-
-let ADS = []; // cached pending ads
+const BACKEND_BASE = location.origin;
+const LIST_URL = BACKEND_BASE + '/api/ads?status=pending_payment';
+let ADS = [];
 let selectedAd = null;
 let autoRefreshTimer = null;
 
-/* logging helpers */
-function log(msg, append=false){
-  const ts = new Date().toISOString().replace('T',' ').replace('Z','');
-  adminLog.textContent = append ? (adminLog.textContent + '\n' + ts + '  ' + msg) : (ts + '  ' + msg);
-  adminLog.scrollTop = adminLog.scrollHeight;
-}
+const listEl = document.getElementById('list');
+const emptyEl = document.getElementById('empty');
+const selectedInfo = document.getElementById('selectedInfo');
+const sellerInfo = document.getElementById('sellerInfo');
 
-/* fetch pending ads */
-async function fetchPendingAds(q){
+const modalBackdrop = document.getElementById('modalBackdrop');
+const modalTitle = document.getElementById('modalTitle');
+const modalMeta = document.getElementById('modalMeta');
+const modalDesc = document.getElementById('modalDesc');
+const modalGallery = document.getElementById('modalGallery');
+const modalClose = document.getElementById('modalClose');
+const modalApprove = document.getElementById('modalApprove');
+const modalDecline = document.getElementById('modalDecline');
+
+async function fetchPendingAds(q) {
   try {
-    log('Fetching pending ads...');
     const url = new URL(LIST_URL);
     if (q) url.searchParams.set('q', q);
     const resp = await fetch(url.toString(), { credentials: 'include' });
-    const raw = await resp.text().catch(()=>null);
-    let data = null;
-    try { data = raw ? JSON.parse(raw) : null; } catch(e){ data = null; }
-    if (!resp.ok) {
-      log(`GET /api/ads failed: HTTP ${resp.status} ${resp.statusText}\n${raw || ''}`, true);
-      listEl.innerHTML = ''; emptyEl.style.display = 'block';
-      return;
-    }
-    if (!data || !Array.isArray(data.ads)) {
-      // some servers might return {success:true, ads: [...] } or return an array directly
-      if (Array.isArray(data)) ADS = data;
-      else ADS = data && data.ads ? data.ads : [];
-    } else {
-      ADS = data.ads;
-    }
+    if (!resp.ok) { listEl.innerHTML = ''; emptyEl.style.display = 'block'; console.error('GET /api/ads failed', resp.status); return; }
+    const data = await resp.json().catch(()=>null);
+    ADS = Array.isArray(data) ? data : (data && data.ads ? data.ads : []);
     renderAds(ADS);
-    log(`Fetched ${ADS.length} pending ad(s).`);
-  } catch (err) {
-    console.error('fetchPendingAds', err);
-    log('Fetch error: ' + (err && err.message ? err.message : String(err)), true);
+  } catch (e) {
+    console.error('fetchPendingAds', e);
     listEl.innerHTML = ''; emptyEl.style.display = 'block';
   }
 }
 
-/* render list */
-function renderAds(list){
+function renderAds(list) {
   listEl.innerHTML = '';
-  if (!list.length) {
-    emptyEl.style.display = 'block';
-    return;
-  }
+  if (!list || !list.length) { emptyEl.style.display = 'block'; return; }
   emptyEl.style.display = 'none';
-  list.forEach(ad=>{
+  list.forEach(ad => {
     const el = document.createElement('div');
     el.className = 'ad-card';
-    const imgSrc = (Array.isArray(ad.images) && ad.images.length) ? ad.images[0] : (ad.image || ad.thumbnail || '');
+    const imgSrc = Array.isArray(ad.images) && ad.images.length ? ad.images[0] : (ad.image || '');
     el.innerHTML = `
       <div class="ad-media"><img src="${escapeHtml(imgSrc)}" alt=""></div>
       <div class="ad-body">
-        <div style="display:flex;justify-content:space-between;align-items:start">
+        <div style="display:flex;justify-content:space-between">
           <div style="flex:1">
             <div class="ad-title">${escapeHtml(ad.title || 'Untitled')}</div>
-            <div class="ad-desc">${escapeHtml(String(ad.description || '').slice(0,220))}</div>
+            <div class="ad-desc">${escapeHtml(String(ad.description || '').slice(0,180))}</div>
             <div class="ad-meta" style="margin-top:6px">
               <div class="badge">₦${Number(ad.price||0).toLocaleString()}</div>
-              <div>${ad.qty || ad.quantity || ad.quantity === 0 ? ('Qty: ' + (ad.quantity ?? ad.qty)) : ''}</div>
+              <div>${ad.quantity || ad.qty || ''}</div>
               <div>${escapeHtml(ad.location || '')}</div>
-              <div>${escapeHtml(ad.seller_id || ad.seller || '')}</div>
+              <div>${escapeHtml(ad.seller_id || '')}</div>
             </div>
           </div>
         </div>
@@ -277,150 +188,102 @@ function renderAds(list){
     `;
     listEl.appendChild(el);
 
-    // wire actions
     el.querySelector('[data-action="view"]').addEventListener('click', ()=> openModal(ad));
-    el.querySelector('[data-action="approve"]').addEventListener('click', ()=> confirmApprove(ad));
-    el.querySelector('[data-action="decline"]').addEventListener('click', ()=> confirmDecline(ad));
+    el.querySelector('[data-action="approve"]').addEventListener('click', ()=> confirmAndPatch(ad.id, 'live'));
+    el.querySelector('[data-action="decline"]').addEventListener('click', ()=> confirmAndPatch(ad.id, 'removed'));
   });
 }
 
-/* modal view */
-const modalBackdrop = document.getElementById('modalBackdrop');
-const modalTitle = document.getElementById('modalTitle');
-const modalMeta = document.getElementById('modalMeta');
-const modalDesc = document.getElementById('modalDesc');
-const modalGallery = document.getElementById('modalGallery');
-const modalExtra = document.getElementById('modalExtra');
-document.getElementById('modalClose').addEventListener('click', closeModal);
-modalBackdrop.addEventListener('click', (e) => { if (e.target === modalBackdrop) closeModal(); });
-
-function openModal(ad){
+function openModal(ad) {
   selectedAd = ad;
   selectedInfo.innerHTML = `<strong>${escapeHtml(ad.title || '')}</strong><div class="small-muted">Ad id: ${ad.id}</div>`;
-  sellerInfo.textContent = `Seller id: ${ad.seller_id || ad.seller || 'unknown'}`;
+  sellerInfo.textContent = `Seller id: ${ad.seller_id || ''}`;
   modalTitle.textContent = ad.title || 'Untitled';
-  modalMeta.textContent = `₦${Number(ad.price||0).toLocaleString()} • ${ad.quantity || ad.qty || ''} pcs • ${escapeHtml(ad.location||'')}`;
+  modalMeta.textContent = `₦${Number(ad.price||0).toLocaleString()} • ${ad.quantity || ''} • ${escapeHtml(ad.location||'')}`;
   modalDesc.textContent = ad.description || '';
   modalGallery.innerHTML = '';
   const imgs = Array.isArray(ad.images) ? ad.images : (ad.images ? [ad.images] : []);
-  if (!imgs.length && ad.image) imgs.push(ad.image);
-  imgs.forEach(src=>{
+  imgs.forEach(src => {
     const i = document.createElement('img'); i.src = src; i.alt = '';
     modalGallery.appendChild(i);
   });
-  modalExtra.textContent = `Seller id: ${ad.seller_id || ''} • Created at: ${ad.created_at || ad.created || ''}`;
   modalBackdrop.style.display = 'flex';
-  modalBackdrop.setAttribute('aria-hidden','false');
+  modalBackdrop.setAttribute('aria-hidden', 'false');
 }
 
-/* close modal */
 function closeModal(){
   modalBackdrop.style.display = 'none';
   modalBackdrop.setAttribute('aria-hidden','true');
 }
 
-/* confirm dialogs */
-function confirmApprove(ad){
-  if (!confirm(`Approve ad "${ad.title}" (id: ${ad.id})? This will make it live.`)) return;
-  doApprove(ad.id);
-}
-function confirmDecline(ad){
-  if (!confirm(`Decline/remove ad "${ad.title}" (id: ${ad.id})? This will set status to removed.`)) return;
-  doDecline(ad.id);
-}
+modalClose.addEventListener('click', closeModal);
+modalBackdrop.addEventListener('click', (e)=> { if (e.target === modalBackdrop) closeModal(); });
 
-/* Approve: try admin endpoints then fallbacks */
-async function doApprove(adId){
-  log(`Approving ad ${adId}...`);
-  // try list of endpoints
-  const attempts = [
-    { method:'POST', url:`/api/admin/ads/${adId}/approve` },
-    { method:'POST', url:`/api/ads/${adId}/approve` },
-    { method:'PATCH', url:`/api/ads/${adId}`, body: { status: 'live' } }
-  ];
-  await tryEndpointsSequentially(attempts, `Ad ${adId} approved`, async () => {
-    // on success - remove from UI list
-    ADS = ADS.filter(a=>a.id !== adId);
-    renderAds(ADS);
-    selectedInfo.textContent = 'No ad selected';
-  });
-}
+modalApprove.addEventListener('click', ()=> {
+  if (!selectedAd) return;
+  if (!confirm(`Approve "${selectedAd.title}"?`)) return;
+  confirmAndPatch(selectedAd.id, 'live');
+});
+modalDecline.addEventListener('click', ()=> {
+  if (!selectedAd) return;
+  if (!confirm(`Decline "${selectedAd.title}"?`)) return;
+  confirmAndPatch(selectedAd.id, 'removed');
+});
 
-/* Decline: try admin endpoints then fallback to status removed */
-async function doDecline(adId){
-  log(`Declining ad ${adId}...`);
-  const attempts = [
-    { method:'POST', url:`/api/admin/ads/${adId}/decline` },
-    { method:'POST', url:`/api/ads/${adId}/decline` },
-    { method:'PATCH', url:`/api/ads/${adId}`, body: { status: 'removed' } }
-  ];
-  await tryEndpointsSequentially(attempts, `Ad ${adId} declined/removed`, async () => {
-    ADS = ADS.filter(a=>a.id !== adId);
-    renderAds(ADS);
-    selectedInfo.textContent = 'No ad selected';
-  });
-}
-
-/* try endpoints sequentially until one returns ok (2xx) */
-async function tryEndpointsSequentially(attempts, successMessage, onSuccess){
-  for (let i=0;i<attempts.length;i++){
-    const attempt = attempts[i];
-    try {
-      const opts = { method: attempt.method, headers: { 'Content-Type':'application/json' }, credentials: 'include' };
-      if (attempt.body) opts.body = JSON.stringify(attempt.body);
-      const url = (attempt.url.startsWith('http') ? attempt.url : BACKEND + attempt.url);
-      log(`Trying ${opts.method} ${url}`);
-      const resp = await fetch(url, opts);
-      const raw = await resp.text().catch(()=>null);
-      let data = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch(e){ data = null; }
-      if (resp.ok) {
-        log(`${opts.method} ${url} -> ${resp.status} OK`, true);
-        if (data) log('Response: ' + JSON.stringify(data, null, 2), true);
-        if (onSuccess) await onSuccess();
-        alert(successMessage);
-        return;
-      } else {
-        log(`${opts.method} ${url} -> HTTP ${resp.status}: ${resp.statusText}\n${raw || ''}`, true);
-        // try next
-      }
-    } catch (err) {
-      console.error('attempt error', err);
-      log(`Error calling endpoint: ${err && err.message ? err.message : String(err)}`, true);
-    }
-  }
-  alert('All update attempts failed. See admin log for details.');
-}
-
-/* fetch seller details by id */
-async function fetchSeller(sellerId){
+async function confirmAndPatch(adId, statusValue) {
   try {
-    sellerInfo.textContent = 'Loading seller...';
-    const url = BACKEND + '/api/users/' + encodeURIComponent(sellerId);
-    const resp = await fetch(url, { credentials: 'include' });
+    const resp = await fetch(BACKEND_BASE + '/api/ads/' + encodeURIComponent(adId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ status: statusValue })
+    });
     const raw = await resp.text().catch(()=>null);
     let data = null;
     try { data = raw ? JSON.parse(raw) : null; } catch(e){ data = null; }
-    if (resp.ok && data && data.user) {
-      const u = data.user;
-      sellerInfo.innerHTML = `<strong>${escapeHtml(u.fullname || u.username || u.email || 'Seller')}</strong><div class="small-muted">${escapeHtml(u.email||'')} • ${escapeHtml(u.phone||'')}</div>`;
-      log(`Loaded seller ${sellerId}`);
-      return u;
-    } else {
-      // some backends expose /api/users/:id differently or not at all; fall back to fetch by query
-      log(`GET /api/users/${sellerId} returned ${resp.status}. Raw: ${raw || ''}`, true);
-      sellerInfo.textContent = `Seller id: ${sellerId} (details not available)`;
-      return null;
+    if (resp.ok) {
+      alert('OK');
+      ADS = ADS.filter(a => a.id !== adId);
+      renderAds(ADS);
+      closeModal();
+      return;
     }
-  } catch (err) {
-    console.error('fetchSeller', err);
-    log('Error fetching seller: ' + (err && err.message ? err.message : String(err)), true);
-    sellerInfo.textContent = `Seller id: ${sellerId} (error)`;
-    return null;
+    // fallback: try POST approve/decline endpoints
+    if (!resp.ok) {
+      if (statusValue === 'live') {
+        await tryFallbackApprove(adId);
+      } else {
+        await tryFallbackDecline(adId);
+      }
+    }
+    console.error('PATCH /api/ads/:id failed', resp.status, raw, data);
+    alert('Update failed. Check console for details.');
+  } catch (e) {
+    console.error('confirmAndPatch error', e);
+    alert('Network error. See console.');
   }
 }
 
-/* UI controls */
+async function tryFallbackApprove(adId) {
+  try {
+    const urls = ['/api/admin/ads/' + adId + '/approve', '/api/ads/' + adId + '/approve'];
+    for (const u of urls) {
+      const resp = await fetch(BACKEND_BASE + u, { method: 'POST', credentials: 'include' });
+      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return; }
+    }
+  } catch (e) { console.error('fallbackApprove error', e); }
+}
+
+async function tryFallbackDecline(adId) {
+  try {
+    const urls = ['/api/admin/ads/' + adId + '/decline', '/api/ads/' + adId + '/decline'];
+    for (const u of urls) {
+      const resp = await fetch(BACKEND_BASE + u, { method: 'POST', credentials: 'include' });
+      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return; }
+    }
+  } catch (e) { console.error('fallbackDecline error', e); }
+}
+
 document.getElementById('refreshBtn').addEventListener('click', ()=> fetchPendingAds(document.getElementById('q').value.trim()));
 document.getElementById('searchBtn').addEventListener('click', ()=> fetchPendingAds(document.getElementById('q').value.trim()));
 document.getElementById('clearBtn').addEventListener('click', ()=> { document.getElementById('q').value=''; fetchPendingAds(); });
@@ -431,22 +294,9 @@ document.getElementById('refreshInterval').addEventListener('change', (e) => {
   if (v > 0) autoRefreshTimer = setInterval(()=> fetchPendingAds(document.getElementById('q').value.trim()), v*1000);
 });
 
-loadSellerBtn.addEventListener('click', async () => {
-  if (!selectedAd) { alert('Select an ad first (View)'); return; }
-  await fetchSeller(selectedAd.seller_id || selectedAd.seller || '');
-});
+function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-/* small helper to escape HTML for text nodes */
-function escapeHtml(s){
-  if (!s && s !== 0) return '';
-  return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]); });
-}
-
-/* initial load */
 fetchPendingAds();
-
-/* expose refresh for console */
-window.__adminRefresh = fetchPendingAds;
 </script>
 </body>
 </html>
