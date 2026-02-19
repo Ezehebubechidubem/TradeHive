@@ -788,3 +788,155 @@ app.post('/api/ads/:id/buy', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   } finally { client.release(); }
 });
+/////////////////////////////////////////////////////////////////////
+// /pay/ad-callback and /pay/order-callback verification (Paystack & Flutterwave)
+/////////////////////////////////////////////////////////////////////
+async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery }, res) {
+  try {
+    if (!provider) provider = PAYMENT_PROVIDER;
+    let verifyResp = null;
+    if (provider === 'flutterwave') {
+      if (!process.env.FLUTTERWAVE_SECRET_KEY) return res.send('Flutterwave not configured on server.');
+      if (!transaction_id) return res.send('Transaction id required.');
+      const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`, 'Content-Type':'application/json' }});
+      verifyResp = await r.json();
+      if (!(verifyResp && verifyResp.status === 'success' && verifyResp.data && (verifyResp.data.status === 'successful' || verifyResp.data.status === 'success'))) {
+        console.log('Flutterwave verify failed', verifyResp);
+        return res.send('Flutterwave verification failed.');
+      }
+    } else if (provider === 'paystack') {
+      if (!process.env.PAYSTACK_SECRET_KEY) return res.send('Paystack not configured on server.');
+      const paystackBase = 'https://api.paystack.co';
+      const attemptVerify = async (ref) => {
+        try {
+          const r = await fetch(`${paystackBase}/transaction/verify/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, 'Content-Type':'application/json' }});
+          const j = await r.json().catch(()=>null);
+          return j;
+        } catch(e){ return null; }
+      };
+      let j = null;
+      if (transaction_id) j = await attemptVerify(transaction_id);
+      if (!j && tx_ref) j = await attemptVerify(tx_ref);
+      if (!j || !j.status) { console.log('Paystack verify failed', j); return res.send('Paystack verification failed.'); }
+      verifyResp = j;
+    } else {
+      return res.send('Unsupported provider.');
+    }
+
+    // Search payments table for matching reference / meta fields
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const candidates = new Set();
+      if (verifyResp && verifyResp.data) {
+        const d = verifyResp.data;
+        if (d.reference) candidates.add(String(d.reference));
+        if (d.tx_ref) candidates.add(String(d.tx_ref));
+        if (d.flw_ref) candidates.add(String(d.flw_ref));
+        if (d.id) candidates.add(String(d.id));
+      }
+      if (tx_ref) candidates.add(String(tx_ref));
+      if (transaction_id) candidates.add(String(transaction_id));
+      const uniq = Array.from(candidates).filter(Boolean);
+
+      let paymentRow = null;
+      for (const c of uniq) {
+        const q1 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [c]);
+        if (q1.rows.length) { paymentRow = q1.rows[0]; break; }
+        const q2 = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [c]);
+        if (q2.rows.length) { paymentRow = q2.rows[0]; break; }
+        const q3 = await client.query("SELECT * FROM payments WHERE (meta->>'paymentId' = $1 OR meta->>'orderId' = $1 OR meta->>'adId' = $1 OR meta->>'tx_ref' = $1) LIMIT 1", [c]);
+        if (q3.rows.length) { paymentRow = q3.rows[0]; break; }
+      }
+
+      if (!paymentRow && tx_ref) {
+        const qf = await client.query("SELECT * FROM payments WHERE meta->'provider_init'->>'reference' = $1 LIMIT 1", [tx_ref]);
+        if (qf.rows.length) paymentRow = qf.rows[0];
+      }
+
+      if (!paymentRow) {
+        await client.query('ROLLBACK');
+        console.warn('No matching payment found for verified txn. Candidates:', uniq);
+        return res.send('Payment verified with provider but matching payment record not found on server.');
+      }
+
+      if ((paymentRow.status || '').toLowerCase() === 'success' || (paymentRow.status || '').toLowerCase() === 'paid') {
+        await client.query('COMMIT');
+        return res.send(`<h2>Payment already processed</h2><p>Payment id ${paymentRow.id} was already processed.</p>`);
+      }
+
+      // mark payment success & append provider verify data
+      await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['success', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
+
+      // for ad fee -> set ad status pending_verification (admin will inspect), notify seller/admin
+      if (paymentRow.ad_id) {
+        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]);
+        const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
+        if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${paymentRow.ad_id} fee was received; admin will review.` });
+        if (process.env.ADMIN_EMAIL) await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${paymentRow.ad_id} paid and requires review.` });
+      }
+
+      // for order payment -> update orders.status = 'paid' & notify seller; schedule follow-ups when seller releases
+      if (paymentRow.order_id) {
+        await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', paymentRow.order_id]);
+        const order = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [paymentRow.order_id])).rows[0];
+        if (order) {
+          const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [order.seller_id])).rows[0];
+          const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [order.buyer_id])).rows[0];
+          if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Order ${paymentRow.order_id} has been paid`, text: `Order ${paymentRow.order_id} was paid. Please prepare shipment and release when ready.` });
+          if (buyer) await sendEmail({ to: buyer.email || buyer.username, subject: `Payment received for order ${paymentRow.order_id}`, text: `We received your payment for order ${paymentRow.order_id}.` });
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // Redirect user to frontend ads page so they can see pending / live ad status.
+      // FRONTEND_BASE env recommended; fallback to request origin if available.
+      const FRONTEND_BASE = process.env.FRONTEND_BASE || '';
+      // Build a safe redirect URL
+      let redirectTo = '';
+      if (FRONTEND_BASE) {
+        redirectTo = FRONTEND_BASE.replace(/\/$/, '') + '/ads.html';
+      } else {
+        // If available, try a generic host; otherwise just link to /ads.html
+        redirectTo = '/ads.html';
+      }
+      // Add query params with minimal info
+      const params = new URLSearchParams();
+      params.set('payment', 'success');
+      params.set('pid', String(paymentRow.id));
+      if (paymentRow.ad_id) params.set('ad', String(paymentRow.ad_id));
+      if (paymentRow.order_id) params.set('order', String(paymentRow.order_id));
+      // final URL
+      const finalUrl = redirectTo + '?' + params.toString();
+
+      try {
+        // prefer redirect (302)
+        return res.redirect(302, finalUrl);
+      } catch (e) {
+        // fallback HTML
+        return res.send(`<h2>Payment verified and processed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue to your ads</a></p>`);
+      }
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('verifyAndProcessProviderPayment error', err);
+    return res.status(500).send('Error processing verification');
+  }
+}
+
+app.get('/pay/ad-callback', async (req, res) => {
+  const { status, tx_ref, transaction_id } = req.query || {};
+  const provider = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
+  return verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery: req.query }, res);
+});
+
+app.get('/pay/order-callback', async (req, res) => {
+  const { status, tx_ref, transaction_id } = req.query || {};
+  const provider = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
+  return verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery: req.query }, res);
+});
+
+/////////////////////////////////////////////////////////////////////
+// Order release route: seller releases goods -> schedule buyer follow-ups
+// Uses working-days scheduling for followups (1,2,3,4 working days)
+/////////////////////////////////////////////////////////////////////
