@@ -811,3 +811,253 @@ app.get('/pay/order-callback', async (req, res) => {
   const provider = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
   return verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery: req.query }, res);
 });
+/////////////////////////////////////////////////////////////////////
+// Order release route: seller releases goods -> schedule buyer follow-ups
+// Uses working-days scheduling for followups (1,2,3,4 working days)
+/////////////////////////////////////////////////////////////////////
+app.post('/api/orders/:id/release', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'paid') return res.status(400).json({ success:false, message:'order-not-paid' });
+
+      await client.query('UPDATE orders SET status=$1, released_at=now(), release_followup_stage=0, updated_at=now() WHERE id=$2', ['released', orderId]);
+
+      // schedule followups at T+1, T+2, T+3, T+4 working days
+      const now = new Date();
+      const day1 = addWorkingDays(now, 1);
+      const day2 = addWorkingDays(now, 2);
+      const day3 = addWorkingDays(now, 3);
+      const day4 = addWorkingDays(now, 4);
+
+      await scheduleJobAt('order-followup', { orderId, stage:1 }, day1);
+      await scheduleJobAt('order-followup', { orderId, stage:2 }, day2);
+      await scheduleJobAt('order-followup', { orderId, stage:3 }, day3);
+      await scheduleJobAt('order-followup', { orderId, stage:4 }, day4);
+
+      // notify buyer/seller immediately
+      const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.buyer_id])).rows[0];
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (buyer) await sendEmail({ to: buyer.email || buyer.username, subject: `Seller released order ${orderId}`, text: `Seller released order ${orderId}. Please confirm receipt.` });
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `You released order ${orderId}`, text: `You released order ${orderId}. Await buyer confirmation.` });
+
+      return res.json({ success:true, message:'order released, followups scheduled (working days)' });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/release', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Buyer confirm route: when buyer confirms, schedule payout after settlement working days
+/////////////////////////////////////////////////////////////////////
+app.post('/api/orders/:id/confirm', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'released') return res.status(400).json({ success:false, message:'order-not-released' });
+
+      await client.query('UPDATE orders SET status=$1, buyer_confirmed_at=now(), updated_at=now() WHERE id=$2', ['completed', orderId]);
+
+      const pay = (await client.query('SELECT * FROM payments WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1', [orderId])).rows[0];
+      // determine settlement days from payment meta (card vs bank)
+      const settlementDays = (function getSettlementDays(meta){
+        if (!meta) return 2;
+        try {
+          const m = typeof meta === 'string' ? JSON.parse(meta) : meta;
+          // heuristics: provider_verify.data.payment_type or provider_init.data.payment_type
+          if (m.provider_verify && m.provider_verify.data) {
+            const p = m.provider_verify.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          if (m.provider_init && m.provider_init.data) {
+            const p = m.provider_init.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          // fallback: bank = 2
+          return 2;
+        } catch(e){ return 2; }
+      })(pay ? pay.meta : null);
+
+      const payoutDate = addWorkingDays(new Date(), settlementDays);
+      await scheduleJobAt('payout-seller', { orderId }, payoutDate);
+
+      // notify seller
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Buyer confirmed receipt for ${orderId}`, text: `Buyer confirmed. Payout scheduled in ${settlementDays} working day(s) (on ${payoutDate.toDateString()}).` });
+
+      return res.json({ success:true, message:`Order completed; payout scheduled in ${settlementDays} working day(s).` });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/confirm', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Webhooks (paystack, flutterwave, stripe)
+// Keep verifying logic and update payments/orders/ads accordingly
+/////////////////////////////////////////////////////////////////////
+
+app.post('/webhook/paystack', express.json({ limit:'1mb' }), async (req, res) => {
+  try {
+    if (process.env.PAYSTACK_SECRET_KEY && !verifyPaystackSignature(req)) {
+      console.warn('Paystack signature mismatch');
+      return res.status(400).send('invalid signature');
+    }
+    const b = req.body || {};
+    const data = b.data || {};
+    const reference = data.reference || data.id || null;
+    const client = await pool.connect();
+    try {
+      if (!reference) return res.status(200).send('ok');
+      const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [reference]);
+      if (!pq.rows.length) return res.status(200).send('ok');
+      const payment = pq.rows[0];
+      if ((payment.status || '').toLowerCase() === 'success') return res.status(200).send('ok');
+      if (data.status === 'success' || String(data.gateway_response || '').toLowerCase().includes('approved')) {
+        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), payment.id]);
+        if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
+        if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
+      }
+      return res.status(200).send('ok');
+    } finally { client.release(); }
+  } catch (err) { console.error('Paystack webhook error', err); res.status(500).send('error'); }
+});
+
+app.post('/webhook/flutterwave', express.json({ limit:'1mb' }), async (req, res) => {
+  try {
+    const header = req.headers['verif-hash'] || req.headers['verif_hash'] || req.headers['x-verif-hash'];
+    if (process.env.FLUTTERWAVE_WEBHOOK_SECRET && header !== process.env.FLUTTERWAVE_WEBHOOK_SECRET) {
+      console.warn('Flutterwave webhook signature mismatch');
+      return res.status(400).send('invalid signature');
+    }
+    const b = req.body || {};
+    const data = b.data || {};
+    const ref = data.tx_ref || data.flw_ref || data.reference;
+    const client = await pool.connect();
+    try {
+      let p = null;
+      if (ref) {
+        const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [ref]);
+        if (pq.rows.length) p = pq.rows[0];
+      }
+      if (!p && data.meta && data.meta.orderId) {
+        const pq2 = await client.query("SELECT * FROM payments WHERE meta->>'orderId' = $1 LIMIT 1", [String(data.meta.orderId)]);
+        if (pq2.rows.length) p = pq2.rows[0];
+      }
+      if (p && (String(data.status).toLowerCase() === 'successful' || String(data.status).toLowerCase() === 'success')) {
+        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), p.id]);
+        if (p.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', p.ad_id]);
+        if (p.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', p.order_id]);
+      } else {
+        console.log('flutterwave webhook: not success or not matched', data.status);
+      }
+      return res.status(200).send('ok');
+    } finally { client.release(); }
+  } catch (e) { console.error('Flutterwave webhook error', e); res.status(500).send('error'); }
+});
+
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripeLib || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('stripe not configured');
+  try {
+    const sig = req.headers['stripe-signature'];
+    const event = stripeLib.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    if (!event) return res.status(400).send('invalid event');
+    const type = event.type;
+    if (type === 'checkout.session.completed' || type === 'payment_intent.succeeded') {
+      const session = event.data.object;
+      const client = await pool.connect();
+      try {
+        let payment = null;
+        const metadata = session.metadata || {};
+        if (metadata.paymentId) {
+          const pq = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [metadata.paymentId]);
+          if (pq.rows.length) payment = pq.rows[0];
+        }
+        if (!payment && metadata.orderId) {
+          const pq2 = await client.query('SELECT * FROM payments WHERE order_id=$1 LIMIT 1', [metadata.orderId]);
+          if (pq2.rows.length) payment = pq2.rows[0];
+        }
+        if (!payment) {
+          const pq3 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [session.id]);
+          if (pq3.rows.length) payment = pq3.rows[0];
+        }
+        if (payment) {
+          await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: session }), payment.id]);
+          if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
+          if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
+        }
+      } finally { client.release(); }
+    }
+    res.json({ received: true });
+  } catch (err) { console.error('Stripe webhook error', err); res.status(400).send(`Webhook Error: ${err.message}`); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Admin endpoints for ads verification (approve/decline)
+/////////////////////////////////////////////////////////////////////
+app.get('/admin/ads/pending', adminAuth, async (req,res) => {
+  try {
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.status=$1 ORDER BY created_at DESC', ['pending_verification']);
+      return res.json({ success:true, ads: r.rows });
+    } finally { client.release(); }
+  } catch(e){ console.error('admin list pending', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/approve', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['live', id]);
+      // notify seller
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` });
+      return res.json({ success:true, message:'approved' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin approve', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/decline', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const { reason } = req.body || {};
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['removed', id]);
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason || 'No reason provided'}` });
+      return res.json({ success:true, message:'declined' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin decline', e); res.status(500).json({ success:false }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Small helpful endpoints & graceful shutdown
+/////////////////////////////////////////////////////////////////////
+app.get('/', (req,res) => res.send('TradeHive backend running'));
+app.get('/health', (req,res) => res.json({ ok:true, now: new Date().toISOString() }));
+
+const server = app.listen(PORT, ()=> console.log(`TradeHive backend listening on ${PORT}`));
+
+async function shutdown() {
+  console.log('Shutting down...');
+  try {
+    if (jobWorker) { await jobWorker.close(); console.log('job worker closed'); }
+    if (jobQueue) { await jobQueue.close(); console.log('job queue closed'); }
+    if (redis) { redis.disconnect(); console.log('redis disconnected'); }
+    server.close(()=> { console.log('HTTP server closed'); process.exit(0); });
+  } catch(e){ console.error('shutdown error', e); process.exit(1); }
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
