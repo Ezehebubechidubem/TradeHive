@@ -875,7 +875,7 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
 
       // for ad fee -> set ad status pending_verification (admin will inspect), notify seller/admin
       if (paymentRow.ad_id) {
-        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]);
+        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending', paymentRow.ad_id]);
         const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
         if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${paymentRow.ad_id} fee was received; admin will review.` });
         if (process.env.ADMIN_EMAIL) await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${paymentRow.ad_id} paid and requires review.` });
