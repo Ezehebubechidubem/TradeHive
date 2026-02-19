@@ -85,16 +85,13 @@
   .subcat.active{ background:#fef7e6; color:var(--text); border:1px solid rgba(255,183,3,0.12); }
 
   /* product grid - denser for app feel */
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:12px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
   .product { background:var(--card); border-radius:16px; overflow:hidden; box-shadow:0 18px 36px var(--shadow); display:flex; flex-direction:column; border:1px solid rgba(12,12,12,0.03); }
-  .media { background:#f7f7f7; height:200px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; border-bottom-left-radius:14px; border-bottom-right-radius:14px }
+  .media { background:#f7f7f7; height:220px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; border-bottom-left-radius:14px; border-bottom-right-radius:14px }
   .media img{ width:100%; height:100%; object-fit:cover; transition:transform .25s; cursor:pointer; }
   .media img:hover{ transform:scale(1.03); }
-  .status-pill { position:absolute; top:12px; left:12px; padding:6px 10px; border-radius:999px; font-weight:800; display:inline-flex; gap:8px; align-items:center; box-shadow:0 10px 26px rgba(0,0,0,0.06) }
+  .live-pill { position:absolute; top:12px; left:12px; background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; padding:6px 10px; border-radius:999px; font-weight:800; display:inline-flex; gap:8px; align-items:center; box-shadow:0 10px 26px rgba(0,0,0,0.06) }
   .live-dot{ width:9px; height:9px; border-radius:50%; background:var(--online); box-shadow:0 0 8px rgba(8,160,57,0.18); animation:blnk 1.2s infinite }
-  .pending-pill{ background:#fff3cd; color:#7a4b00 }
-  .offline-pill{ background:#f2f2f2; color:#333 }
-  .live-pill { background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; }
   @keyframes blnk {0%{opacity:1}50%{opacity:0.3}100%{opacity:1}}
 
   .body { padding:12px; display:flex; flex-direction:column; gap:8px; }
@@ -137,6 +134,15 @@
   .modal-backdrop{ position:fixed; inset:0; display:none; background:rgba(0,0,0,0.35); align-items:center; justify-content:center; z-index:1600 }
   .modal{ background:var(--card); width:94%; max-width:680px; border-radius:14px; padding:18px; box-shadow:0 18px 60px rgba(0,0,0,0.18) }
 
+  /* BANK modal (centered) */
+  .bank-backdrop{ position:fixed; inset:0; display:none; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:3000; }
+  .bank-modal{
+    width:94%; max-width:420px; background:var(--card); padding:18px; border-radius:14px; box-shadow:0 28px 80px rgba(0,0,0,0.32);
+    border:1px solid rgba(12,12,12,0.06);
+  }
+  .bank-modal h3{ margin:0 0 8px 0 }
+  .bank-row{ margin-top:8px }
+
   /* toast */
   .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:84px; background:#071014; color:var(--gold1); padding:10px 14px; border-radius:12px; display:none; z-index:2200; font-weight:800 }
 
@@ -146,15 +152,6 @@
   .nav-item .ni-icon{ width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; }
   .nav-item.active{ color:var(--gold1); }
   .fab{ position:fixed; left:50%; transform:translateX(-50%); bottom:36px; width:68px; height:68px; border-radius:999px; background:linear-gradient(180deg,var(--gold1),var(--gold2)); color:#071014; display:flex; align-items:center; justify-content:center; box-shadow:0 18px 40px rgba(0,0,0,0.28); z-index:2100; cursor:pointer; font-weight:900; border:6px solid rgba(7,16,20,0.06) }
-
-  /* Bank modal (NEW: centered, good design) */
-  .bank-backdrop { position:fixed; inset:0; display:none; background:rgba(0,0,0,0.45); align-items:center; justify-content:center; z-index:2600; }
-  .bank-modal { width:94%; max-width:480px; background:var(--card); border-radius:14px; padding:18px; box-shadow:0 40px 120px rgba(2,6,23,0.45); border:0; }
-  .bank-modal h3 { margin:0 0 10px 0; font-size:18px; font-weight:900; }
-  .bank-row { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
-  .bank-row input { padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06); width:100%; }
-  .bank-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
-  .bank-note { font-size:13px; color:var(--muted); margin-top:6px; }
 
   body.dark { --page-bg:#061017; --card:#071018; --text:#e6eef8; --muted:#9aa0a6; --shadow: rgba(0,0,0,0.5); --nav-bg:#071018; --nav-icon:#9aa0a6; }
 
@@ -260,23 +257,6 @@
     </nav>
   </aside>
 
-  <!-- Bank modal: centered pop-up -->
-  <div class="bank-backdrop" id="bankBackdrop" aria-hidden="true">
-    <div class="bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankTitle">
-      <h3 id="bankTitle">Payout / Bank details</h3>
-      <div class="bank-row">
-        <input id="bankName" placeholder="Account name" aria-label="Account name" />
-        <input id="bankAccount" placeholder="Account number" aria-label="Account number" />
-        <input id="bankCode" placeholder="Bank code" aria-label="Bank code" />
-        <div class="bank-note" id="bankMsg">Enter account name, account number and bank code. This will be used to pay out when orders are released.</div>
-      </div>
-      <div class="bank-actions">
-        <button class="btn ghost" id="bankCancel">Cancel</button>
-        <button class="btn gold" id="bankSave">Save</button>
-      </div>
-    </div>
-  </div>
-
   <!-- main content area -->
   <main class="content" id="mainContent" role="main">
     <div class="controls" aria-label="Category selection">
@@ -323,6 +303,35 @@
     </div>
   </div>
 
+  <!-- BANK modal (centered) -->
+  <div class="bank-backdrop" id="bankBackdrop" aria-hidden="true">
+    <div class="bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankTitle">
+      <h3 id="bankTitle">Payout / Bank details</h3>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account name</label>
+        <input id="bankAccountName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. John Doe" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account number</label>
+        <input id="bankAccountNumber" type="text" inputmode="numeric" pattern="[0-9]*" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 0123456789" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank name</label>
+        <input id="bankName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. Access Bank" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank code</label>
+        <input id="bankCode" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 044" />
+      </div>
+
+      <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn ghost" id="bankCancel">Cancel</button>
+        <button class="btn gold" id="bankSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+<!-- product view modal (new) -->
   <div class="view-backdrop" id="viewBackdrop" aria-hidden="true">
     <div class="view-modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
@@ -444,18 +453,49 @@
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
   </nav>
+
 <script>
 /* ============================
    Storage keys & helpers
    ============================ */
-const USER_KEY = 'wire_user_v1';
+/*
+  IMPORTANT NOTE on keys:
+  - Your login page stores the logged-in user in localStorage using key 'th_user'.
+  - Previous dashboard version used 'wire_user_v1'.
+  We'll read both for compatibility, and whenever we write we write to both keys so pages stay in sync.
+*/
+const LEGACY_USER_KEY = 'wire_user_v1';      // older key
+const LOGIN_USER_KEY   = 'th_user';          // login.html writes this
 const CART_KEY = 'wire_cart_v1';
-function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
-function writeUser(u){
-  try { localStorage.setItem(USER_KEY, JSON.stringify(u)); } catch(e){}
-  renderCart();
-  setAvatarFromUser();
+const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com'; // your backend base
+
+function readUser(){
+  try {
+    let raw = localStorage.getItem(LOGIN_USER_KEY);
+    if(raw && raw !== 'null'){
+      return JSON.parse(raw);
+    }
+    raw = localStorage.getItem(LEGACY_USER_KEY);
+    if(raw && raw !== 'null'){
+      return JSON.parse(raw);
+    }
+    return null;
+  } catch(e){ return null; }
 }
+function writeUser(u){
+  try {
+    localStorage.setItem(LOGIN_USER_KEY, JSON.stringify(u));
+  } catch(e){}
+  try {
+    localStorage.setItem(LEGACY_USER_KEY, JSON.stringify(u));
+  } catch(e){}
+  renderCart();
+}
+function clearUser(){
+  try { localStorage.removeItem(LOGIN_USER_KEY); } catch(e){}
+  try { localStorage.removeItem(LEGACY_USER_KEY); } catch(e){}
+}
+
 function readCart(){ try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch(e){ return []; } }
 function writeCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); renderCart(); }
 
@@ -470,8 +510,8 @@ function setAvatarFromUser(){
   const avatarWrap = document.getElementById('avatarWrap');
   const mini = document.getElementById('miniAvatar');
 
-  if(u && u.id){
-    nameEl.textContent = u.fullname || u.username || u.email || 'User';
+  if(u){
+    nameEl.textContent = u.fullname || u.username || (u.email ? u.email.split('@')[0] : 'User');
     emailEl.textContent = u.phone || u.email || 'Member';
     if(u.avatarUrl){
       avatarBox.innerHTML = `<img src="${u.avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover">`;
@@ -491,688 +531,21 @@ function setAvatarFromUser(){
   const online = (u && u.online) ? true : false;
   if(online){ avatarWrap.classList.add('online'); } else { avatarWrap.classList.remove('online'); }
 }
-setAvatarFromUser();
 
-/* ---------------------------
-  Helper: fetch fresh user from backend using existing user.id
-*/
-async function refreshUserFromServer() {
+/* Try to refresh user details from backend (uses your existing endpoint /api/kyc/status/:id which returns user row) */
+async function refreshUserFromServer(){
   const u = readUser();
-  if (!u || !u.id) return null;
+  if(!u || !u.id) return;
   try {
-    const res = await fetch((location.origin || '') + '/api/kyc/status/' + encodeURIComponent(u.id), { credentials: 'include' });
-    if (!res.ok) return null;
+    const res = await fetch(`${BACKEND_BASE}/api/kyc/status/${encodeURIComponent(u.id)}`, { method:'GET' });
+    if(!res.ok) return;
     const j = await res.json().catch(()=>null);
-    if (!j || !j.success) return null;
-    const serverUser = j.user || {};
-    const merged = Object.assign({}, u, serverUser);
-    writeUser(merged);
-    return merged;
-  } catch (e) {
-    console.warn('refreshUserFromServer failed', e);
-    return null;
-  }
-}
-
-/* ---------------------------
-  Bank modal handlers (NEW)
-*/
-const bankBackdrop = document.getElementById('bankBackdrop');
-const bankNameInput = document.getElementById('bankName');
-const bankAccountInput = document.getElementById('bankAccount');
-const bankCodeInput = document.getElementById('bankCode');
-const bankMsg = document.getElementById('bankMsg');
-
-document.getElementById('linkBank').addEventListener('click', (e)=> { e.preventDefault(); openBankModal(); });
-
-function openBankModal(){
-  const u = readUser();
-  if (u && u.account_details) {
-    bankAccountInput.value = u.account_details.account_number || '';
-    bankNameInput.value = u.account_details.name || u.fullname || '';
-    bankCodeInput.value = u.account_details.bank_code || '';
-    bankMsg.textContent = 'Loaded from your saved profile. Edit and press Save to persist.';
-  } else {
-    bankAccountInput.value = '';
-    bankNameInput.value = '';
-    bankCodeInput.value = '';
-    bankMsg.textContent = 'Enter account name, account number and bank code.';
-    const u2 = readUser();
-    if (u2 && u2.id) {
-      refreshUserFromServer().then(updated => {
-        const uu = readUser();
-        if (uu && uu.account_details) {
-          bankAccountInput.value = uu.account_details.account_number || '';
-          bankNameInput.value = uu.account_details.name || uu.fullname || '';
-          bankCodeInput.value = uu.account_details.bank_code || '';
-          bankMsg.textContent = 'Loaded from server (if available).';
-        }
-      }).catch(()=>{});
-    }
-  }
-  bankBackdrop.style.display = 'flex';
-  bankBackdrop.setAttribute('aria-hidden','false');
-  bankNameInput.focus();
-}
-
-document.getElementById('bankCancel').addEventListener('click', ()=> {
-  bankBackdrop.style.display='none';
-  bankBackdrop.setAttribute('aria-hidden','true');
-});
-
-document.getElementById('bankSave').addEventListener('click', async () => {
-  const u = readUser();
-  if (!u || !u.id) { bankMsg.textContent = 'You must be signed in to save bank details.'; return; }
-  const account_number = bankAccountInput.value.trim();
-  const name = bankNameInput.value.trim();
-  const bank_code = bankCodeInput.value.trim();
-  if (!account_number || !name || !bank_code) { bankMsg.textContent = 'All fields are required.'; return; }
-  bankMsg.textContent = 'Saving...';
-
-  try {
-    const res = await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(u.id) + '/bank', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      credentials: 'include',
-      body: JSON.stringify({ account_number, bank_code, name })
-    });
-    const json = await res.json().catch(()=>null);
-    if (res.ok && json && json.success) {
-      bankMsg.textContent = 'Saved successfully.';
-      const merged = Object.assign({}, u, json.user || {});
-      if (!merged.account_details) merged.account_details = {};
-      merged.account_details.account_number = account_number;
-      merged.account_details.bank_code = bank_code;
-      merged.account_details.name = name;
+    if(j && j.success && j.user){
+      const merged = Object.assign({}, u, j.user);
+      // if account_details in user row, merge it
+      try { if(j.user.account_details) merged.account_details = j.user.account_details; } catch(e){}
       writeUser(merged);
-
-      setTimeout(()=> {
-        bankBackdrop.style.display='none';
-        bankBackdrop.setAttribute('aria-hidden','true');
-      }, 700);
-      return;
-    } else {
-      bankMsg.textContent = (json && json.message) ? json.message : 'Failed to save (server error)';
-    }
-  } catch (e) {
-    console.error('save bank error', e);
-    bankMsg.textContent = 'Network error while saving bank details.';
-  }
-});
-
-/* ---------------------------
-  Status switch
-*/
-const statusSwitch = document.getElementById('statusSwitch');
-const storedUser = readUser();
-statusSwitch.checked = (storedUser && storedUser.online) ? true : false;
-statusSwitch.addEventListener('change', async ()=>{
-  let u = readUser() || { username:'guest' };
-  u.online = statusSwitch.checked;
-  writeUser(u);
-  setAvatarFromUser();
-  renderProducts();
-  showToast(u.online ? 'You are online' : 'You are offline');
-
-  try {
-    const uid = u.id;
-    if (!uid) return;
-    const payload = { online: Boolean(u.online) };
-    if (navigator.geolocation && u.online) {
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        payload.lat = pos.coords.latitude;
-        payload.lng = pos.coords.longitude;
-        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload)
-        }).catch(e => console.warn('persist online failed', e));
-      }, async () => {
-        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload)
-        }).catch(e => console.warn('persist online failed', e));
-      }, { timeout: 6000 });
-    } else {
-      await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload)
-      }).catch(e => console.warn('persist online failed', e));
-    }
-  } catch (e) { console.warn('online toggle error', e); }
-});
-
-/* ---------------------------
-  Subcategories + categories (unchanged)
-*/
-const SUBS = {
-  'All': ['All'],
-  'Foods': ['All','Food','Pastry','Items'],
-  'Clothing': ['All','Men','Women','Children','Shoes','Jewellery'],
-  'Electronics & Gadgets': ['All','Phones','Laptop','MP3','iPad','Watch','Fans','Others']
-};
-const catEls = document.querySelectorAll('.cat');
-const subRoot = document.getElementById('subcats');
-function buildSubcats(active){
-  subRoot.innerHTML = '';
-  const subs = SUBS[active] || ['All'];
-  subs.forEach((s,i)=>{
-    const d = document.createElement('div'); d.className='subcat' + (i===0?' active':''); d.textContent=s; d.dataset.sub=s;
-    d.addEventListener('click', ()=>{ document.querySelectorAll('.subcat').forEach(x=>x.classList.remove('active')); d.classList.add('active'); renderProducts(); });
-    subRoot.appendChild(d);
-  });
-}
-catEls.forEach(c=> c.addEventListener('click', ()=>{
-  catEls.forEach(x=>x.classList.remove('active'));
-  c.classList.add('active');
-  buildSubcats(c.dataset.cat);
-  renderProducts();
-}));
-buildSubcats('All');
-/* ---------------------------
-  PRODUCTS fallback (demo items)
-*/
-const PRODUCTS = [
-  { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
-      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg',
-      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg'
-    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food', created_at: new Date().toISOString()},
-  { id:'p2', title:'Assorted Pastry Box', desc:'Delicious pastry box for events.', images:[
-      'https://i.postimg.cc/SsJHtvkf/IMG-20260214-162941.jpg',
-      'https://i.postimg.cc/3x3z0XgY/pastry1.jpg'
-    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry', created_at: new Date().toISOString()},
-  { id:'p3', title:'Designer Ankara Shirt (XL)', desc:'Handmade Ankara shirt — top quality fabric.', images:[
-      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg',
-      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg'
-    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men', created_at: new Date().toISOString()},
-  { id:'p4', title:'Women Floral Dress', desc:'Summer women dress, size M.', images:[
-      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg',
-      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg'
-    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women', created_at: new Date().toISOString()},
-  { id:'p5', title:'Portable Radio', desc:'Compact radio with excellent sound quality.', images:[
-      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg',
-      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg'
-    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio', created_at: new Date().toISOString()},
-  { id:'p6', title:'Table Fan 3-speed', desc:'Durable table fan for home.', images:[
-      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg',
-      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg'
-    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans', created_at: new Date().toISOString()}
-];
-
-/* ---------------------------
-  Backend integration base
-*/
-const BACKEND_BASE = (location.origin || 'https://tradehive-s4e6.onrender.com');
-let BACKEND_ADS = null;
-let BACKEND_AVAILABLE = false;
-
-/* helper: map backend ad row -> UI product shape */
-function mapBackendAdToProduct(a) {
-  const images = (a.images && Array.isArray(a.images) && a.images.length) ? a.images.slice() : [];
-  if(!images.length && a.images && typeof a.images === 'string') {
-    try {
-      const parsed = JSON.parse(a.images);
-      if(Array.isArray(parsed)) images.push(...parsed);
-    } catch(e){}
-    if(!images.length) images.push(a.images);
-  }
-  if(!images.length) images.push('https://i.postimg.cc/3x3z0XgY/pastry1.jpg');
-
-  return {
-    id: String(a.id || a.ad_id || a._id || ('ad_' + Math.random().toString(36).slice(2,9))),
-    title: a.title || a.name || 'Untitled',
-    desc: a.description || a.desc || '',
-    images,
-    price: Number(a.price || a.amount || 0),
-    qty: Number(a.quantity || a.qty || 1),
-    loc: a.location || a.city || '',
-    status: String(a.status || '').toLowerCase(),
-    live: String(a.status || '').toLowerCase() === 'live' || String(a.status || '').toLowerCase() === 'active',
-    seller_online: (a.seller_online !== undefined) ? Boolean(a.seller_online) : true,
-    category: a.category || a.category_name || 'Other',
-    sub: a.subcategory || a.sub || 'All',
-    created_at: a.created_at || a.createdAt || new Date().toISOString()
-  };
-}
-
-/* ---------------------------
-  Render products (NEW: matches screenshot UI)
-*/
-const productsRoot = document.getElementById('products');
-
-function computeExpiry(createdAtIso) {
-  try {
-    const created = new Date(createdAtIso);
-    const expiry = new Date(created.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return expiry;
-  } catch(e){ return null; }
-}
-
-function isExpired(createdAt) {
-  const expiry = computeExpiry(createdAt);
-  if (!expiry) return false;
-  return Date.now() > expiry.getTime();
-}
-
-function statusElementHtml(status) {
-  const st = String(status || '').toLowerCase();
-  if (st === 'pending' || st === 'pending_verification' || st === 'pending_payment') {
-    return `<div class="status-pill pending-pill">Pending</div>`;
-  }
-  if (st === 'live' || st === 'active') {
-    return `<div class="status-pill live-pill"><span class="live-dot"></span> LIVE</div>`;
-  }
-  if (st === 'offline') {
-    return `<div class="status-pill offline-pill">Offline</div>`;
-  }
-  if (st === 'expired') {
-    return `<div class="status-pill offline-pill">Expired</div>`;
-  }
-  if (st === 'removed') {
-    return `<div class="status-pill offline-pill">Removed</div>`;
-  }
-  return `<div class="status-pill offline-pill">${(st||'draft').toUpperCase()}</div>`;
-}
-
-function renderProducts(){
-  productsRoot.innerHTML = '';
-
-  const activeCat = document.querySelector('.cat.active').dataset.cat;
-  const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
-
-  let list = [];
-  if(BACKEND_AVAILABLE && Array.isArray(BACKEND_ADS)) {
-    list = BACKEND_ADS.map(mapBackendAdToProduct);
-  } else {
-    list = PRODUCTS.slice();
-  }
-
-  const filtered = list.filter(p=>{
-    if(activeCat !== 'All' && p.category !== activeCat) return false;
-    if(activeSub !== 'All' && p.sub !== activeSub) return false;
-    return true;
-  });
-
-  filtered.forEach(p=>{
-    const el = document.createElement('article'); el.className='product';
-    const expired = isExpired(p.created_at);
-    const status = expired ? 'expired' : (p.status || (p.live ? 'live' : 'offline'));
-
-    el.innerHTML = `
-      <div class="media" role="button" tabindex="0" data-id="${p.id}">
-        <img src="${escapeHtml(p.images[0])}" alt="${escapeHtml(p.title)}">
-        <div style="position:absolute;left:12px;top:12px">${statusElementHtml(status)}</div>
-      </div>
-      <div class="body">
-        <div class="p-title">${escapeHtml(p.title)}</div>
-        <div class="p-desc">${escapeHtml(p.desc)}</div>
-        <div class="meta"><div class="price">₦${Number(p.price).toLocaleString()}</div><div class="loc">${escapeHtml(p.loc)} • ${p.qty} pcs</div></div>
-        <div class="qty-row" style="margin-top:8px">
-          <label style="font-weight:700">Qty</label>
-          <input class="qty" type="number" min="1" max="${p.qty}" value="1" />
-        </div>
-
-        <div class="actions" style="margin-top:12px">
-          <button class="btn gold addBtn">Add to cart</button>
-          <button class="btn ghost viewBtn">View</button>
-        </div>
-      </div>
-    `;
-
-    productsRoot.appendChild(el);
-
-    // image click -> open view modal
-    el.querySelector('.media').addEventListener('click', ()=> openViewModal(p));
-    el.querySelector('.media').addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') openViewModal(p); });
-
-    // handlers: Add to cart & View
-    el.querySelector('.addBtn').addEventListener('click', ()=>{
-      const q = parseInt(el.querySelector('.qty').value || '1', 10) || 1;
-      addToCart(p, q, true);
-    });
-    el.querySelector('.viewBtn').addEventListener('click', ()=>{ openViewModal(p); });
-  });
-}
-
-/* ---------------------------
-  Server fetch for seller's own ads (my ads)
-*/
-async function tryFetchBackendAds(timeoutMs = 5000) {
-  const controller = new AbortController();
-  const id = setTimeout(()=> controller.abort(), timeoutMs);
-  try {
-    const user = readUser();
-    if (!user || !user.id) {
-      clearTimeout(id);
-      BACKEND_AVAILABLE = false; BACKEND_ADS = null; return null;
-    }
-    // Use your backend route - if not present this will fail gracefully and we fall back to demo list
-    const res = await fetch(BACKEND_BASE + '/api/ads?status=live', { signal: controller.signal, credentials: 'include' });
-    clearTimeout(id);
-    if(!res.ok){ BACKEND_AVAILABLE=false; BACKEND_ADS=null; return null; }
-    const json = await res.json().catch(()=>null);
-    if(!json) { BACKEND_AVAILABLE=false; BACKEND_ADS=null; return null; }
-    // Support both shapes: { success:true, ads: [...] } or raw array
-    if (Array.isArray(json)) {
-      BACKEND_ADS = json; BACKEND_AVAILABLE = true; return json;
-    }
-    if (json.success && Array.isArray(json.ads)) {
-      BACKEND_ADS = json.ads; BACKEND_AVAILABLE = true; return json.ads;
-    }
-    BACKEND_AVAILABLE=false; BACKEND_ADS=null; return null;
-  } catch (err) { clearTimeout(id); BACKEND_AVAILABLE=false; BACKEND_ADS=null; return null; }
-}
-
-/* ---------------------------
-  Re-awake / create ad payment (keeps previous reawke behavior)
-*/
-async function handleReawake(ad) {
-  if (!confirm(`Re-awake "${ad.title}" — this requires a ₦1000 payment. Proceed to payment?`)) return;
-  const user = readUser();
-  if (!user || !user.id) { showToast('Sign in to re-awake'); return; }
-
-  const payload = {
-    seller_id: user.id,
-    title: ad.title,
-    description: ad.desc || ad.description || '',
-    images: ad.images || [],
-    price: ad.price || 0,
-    currency: 'NGN',
-    quantity: ad.qty || ad.quantity || 1,
-    location: ad.loc || '',
-    category: ad.category || '',
-    subcategory: ad.sub || '',
-    idempotency_key: 'reawaken_' + ad.id
-  };
-
-  try {
-    const res = await fetch(BACKEND_BASE + '/api/ads', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    });
-    const json = await res.json().catch(()=>null);
-    if (res.ok && json && json.success && json.init) {
-      const init = json.init;
-      let redirectUrl = null;
-      if (init.data) redirectUrl = init.data.authorization_url || init.data.link || init.data.checkout_url || init.data.authorization_url;
-      redirectUrl = redirectUrl || init.url || (init.session && init.session.url) || init.authorization_url || init.link;
-      if (redirectUrl) { window.location.href = redirectUrl; return; }
-      else { showToast('Payment initialized — opening My Ads'); window.location.href = '/ads.html?payment=init&ad=' + encodeURIComponent(json.adId || ''); return; }
-    } else {
-      showToast((json && json.message) ? json.message : 'Failed to init payment');
-    }
-  } catch (e) {
-    console.error('reawke error', e);
-    showToast('Network error during payment init');
-  }
-}
-
-/* ---------------------------
-  Fetch / refresh ads from backend
-*/
-async function refreshAds() {
-  await tryFetchBackendAds(6000);
-  renderProducts();
-}
-
-/* ---------------------------
-  Cart functions
-*/
-function addToCart(product, qty, showConfirm=false){
-  const cart = readCart();
-  const found = cart.find(i=>i.id===product.id);
-  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
-  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
-  writeCart(cart);
-  if(showConfirm){
-    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
-    document.getElementById('confirmBackdrop').style.display='flex';
-  } else {
-    showToast('Added to cart');
-  }
-}
-
-function renderCart(){
-  const cartList = document.getElementById('cartList');
-  if(!cartList) return;
-  const cart = readCart();
-  cartList.innerHTML = '';
-  let total = 0;
-  cart.forEach(item=>{
-    total += item.qty * item.price;
-    const div = document.createElement('div');
-    div.className = 'cart-item';
-    div.innerHTML = `<img src="${item.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:8px">
-      <div style="flex:1"><div style="font-weight:800">${item.title}</div><div style="color:var(--muted);font-size:13px">Qty: ${item.qty} • ₦${Number(item.price).toLocaleString()}</div></div>
-      <div><button class="btn ghost remove" data-id="${item.id}">Remove</button></div>`;
-    cartList.appendChild(div);
-  });
-  document.getElementById('cartTotal').textContent = '₦' + Number(total).toLocaleString();
-  document.getElementById('cartCount').textContent = cart.reduce((s,i)=>s+i.qty,0);
-  document.getElementById('cartCount').setAttribute('aria-label', `${cart.reduce((s,i)=>s+i.qty,0)} items in cart`);
-
-  const checkoutBtn = document.getElementById('checkoutNow');
-  checkoutBtn.disabled = cart.length === 0;
-
-  Array.from(document.querySelectorAll('.remove')).forEach(b=>{
-    b.addEventListener('click', (e)=>{
-      const id = e.target.dataset.id;
-      const c = readCart().filter(x=>x.id!==id);
-      writeCart(c);
-      renderCart();
-      showToast('Removed');
-    });
-  });
-}
-
-/* ---------------------------
-  Cart toggle handlers
-*/
-const cartBackdrop = document.getElementById('cartBackdrop');
-function toggleCart(fromDrawer = false){
-  const isOpen = cartBackdrop.style.display === 'flex';
-  if(isOpen){
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  } else {
-    renderCart();
-    cartBackdrop.style.display = 'flex';
-    cartBackdrop.setAttribute('aria-hidden','false');
-    if(fromDrawer) closeDrawer();
-    const checkoutBtn = document.getElementById('checkoutNow');
-    checkoutBtn.focus();
-  }
-}
-
-document.getElementById('openCartTop').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(false);
-});
-document.getElementById('linkCart').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(true);
-});
-cartBackdrop.addEventListener('click', (e)=>{
-  if(e.target === cartBackdrop) {
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  }
-});
-document.getElementById('closeCart').addEventListener('click', ()=> {
-  cartBackdrop.style.display='none';
-  cartBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('checkoutNow').addEventListener('click', ()=> {
-  const cart = readCart();
-  if(cart.length === 0){ showToast('Cart empty'); return; }
-  alert(`Proceeding to payment — total ${document.getElementById('cartTotal').textContent}`);
-});
-
-/* Confirm popup handlers */
-document.getElementById('confirmProceed').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Proceeding to payment (demo). Order remains in cart.');
-});
-document.getElementById('confirmCancel').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Item kept in cart.');
-});
-
-/* Product VIEW modal */
-const viewBackdrop = document.getElementById('viewBackdrop');
-const viewImageEl = document.getElementById('viewImage');
-const viewThumbs = document.getElementById('viewThumbs');
-const viewTitle = document.getElementById('viewName');
-const viewDesc = document.getElementById('viewDesc');
-const viewPrice = document.getElementById('viewPrice');
-const viewLoc = document.getElementById('viewLoc');
-const viewQty = document.getElementById('viewQty');
-let viewCurrentProduct = null;
-let viewCurrentIndex = 0;
-
-function openViewModal(product){
-  viewCurrentProduct = product;
-  viewCurrentIndex = 0;
-  viewTitle.textContent = product.title;
-  viewDesc.textContent = product.desc;
-  viewPrice.textContent = '₦' + Number(product.price).toLocaleString();
-  viewLoc.textContent = product.loc + ' • ' + product.qty + ' pcs';
-  viewQty.value = 1;
-  renderViewGallery(product.images);
-  viewImageEl.src = product.images[0];
-  viewBackdrop.style.display = 'flex';
-  viewBackdrop.setAttribute('aria-hidden','false');
-}
-
-function renderViewGallery(images){
-  viewThumbs.innerHTML = '';
-  images.forEach((src, i)=>{
-    const thumb = document.createElement('div');
-    thumb.className = 'view-thumb' + (i===0 ? ' active' : '');
-    thumb.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="thumb">`;
-    thumb.addEventListener('click', ()=> {
-      viewCurrentIndex = i;
-      viewImageEl.src = images[i];
-      Array.from(viewThumbs.children).forEach(c=>c.classList.remove('active'));
-      thumb.classList.add('active');
-    });
-    viewThumbs.appendChild(thumb);
-  });
-}
-
-document.getElementById('closeView').addEventListener('click', ()=> {
-  viewBackdrop.style.display='none';
-  viewBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('viewAdd').addEventListener('click', ()=>{
-  if(!viewCurrentProduct) return;
-  const q = Math.max(1, Math.min(viewCurrentProduct.qty, parseInt(viewQty.value || '1')));
-  addToCart(viewCurrentProduct, q, false);
-  renderCart(); // update totals & button
-  showToast('Added to cart');
-});
-
-/* Drawer open/close + links */
-const drawer = document.getElementById('drawer');
-const backdrop = document.getElementById('drawerBackdrop');
-document.getElementById('profileIcon').addEventListener('click', ()=> openDrawer());
-document.getElementById('hambBtn').addEventListener('click', ()=> openDrawer());
-document.getElementById('drawerClose').addEventListener('click', ()=> closeDrawer());
-backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
-function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
-function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
-
-/* quick link behaviors */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ closeDrawer(); window.location.href = 'sell.html'; });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); });
-document.getElementById('linkKyc').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'kyc.html'; });
-document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'ads.html'; });
-document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'sell.html'; });
-
-/* Logout */
-document.getElementById('linkLogout').addEventListener('click', (e)=>{
-  e.preventDefault();
-  localStorage.removeItem(USER_KEY);
-  setAvatarFromUser();
-  showToast('Logged out (demo)');
-});
-
-/* toast helper */
-function showToast(msg, ms=2200){
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.style.display = 'block';
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(()=> t.style.display='none', ms);
-}
-
-/* On first load: demo user (preserve prior behavior) */
-if(!readUser()){
-  writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
-  setAvatarFromUser();
-} else {
-  setAvatarFromUser();
-}
-
-/* Try to refresh user from server if possible */
-(async function initUserSync(){
-  const u = readUser();
-  if (u && u.id) {
-    const refreshed = await refreshUserFromServer();
-    if (!refreshed) {
       setAvatarFromUser();
     }
-  } else {
-    setAvatarFromUser();
-  }
-})();
-
-/* storage events from other tabs (or login page) will update profile immediately */
-window.addEventListener('storage', (e)=>{
-  if (e.key === USER_KEY) {
-    setAvatarFromUser();
-    renderCart();
-    const u = readUser();
-    if (u && u.id) refreshUserFromServer();
-  }
-});
-
-/* close modals/backdrops on outside click */
-document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(b=>{
-  b.addEventListener('click', (e)=>{ if(e.target === b) { b.style.display='none'; b.setAttribute('aria-hidden','true'); } });
-});
-
-/* ESC to close */
-document.addEventListener('keydown', (e)=>{
-  if(e.key === 'Escape'){
-    closeDrawer();
-    document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(m=>{ m.style.display='none'; m.setAttribute('aria-hidden','true'); });
-    cartBackdrop.style.display = 'none';
-    bankBackdrop.style.display = 'none';
-  }
-});
-
-/* initial rendering & try loading backend ads */
-(async function loadAll(){
-  await refreshAds();
-  renderProducts();
-  renderCart();
-})();
-
-/* cart storage events */
-window.addEventListener('storage', (e)=>{
-  if(e.key === CART_KEY) renderCart();
-});
-
-/* small util */
-function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-</script>
-</body>
-</html>
+  } catch(e){ /* ignore */ }
+}
