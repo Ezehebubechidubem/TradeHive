@@ -803,36 +803,59 @@ app.get('/pay/ad-callback', async (req, res) => {
     return res.send('No payment status received.');
   }
 
-  if (status !== 'successful') {
+  // Accept multiple possible success values
+  if (!['successful', 'completed', 'success'].includes(status)) {
     return res.send('Payment not successful.');
   }
 
-  // IMPORTANT: Verify payment with Flutterwave server
+  if (!transaction_id) {
+    return res.send('Transaction ID missing.');
+  }
+
   try {
-    const verifyRes = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
-      headers: {
-        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`
+    // Verify with Flutterwave
+    const verifyRes = await fetch(
+      `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
     const verifyData = await verifyRes.json();
 
-    if (verifyData.status === 'success') {
-      // Payment verified
-      res.send(`
+    console.log('Flutterwave verify response:', verifyData);
+
+    if (
+      verifyData.status === 'success' &&
+      verifyData.data &&
+      verifyData.data.status === 'successful'
+    ) {
+      // OPTIONAL: Extra safety checks
+      // Check reference matches
+      if (verifyData.data.tx_ref !== tx_ref) {
+        return res.send('Transaction reference mismatch.');
+      }
+
+      // TODO: Update your ad in database here
+      // Example:
+      // await Ads.updateOne({ tx_ref }, { status: 'active', paid: true });
+
+      return res.send(`
         <h2>Payment Successful 🎉</h2>
         <p>Your ad will go live shortly.</p>
       `);
     } else {
-      res.send('Verification failed.');
+      return res.send('Verification failed.');
     }
 
   } catch (err) {
     console.error('Verification error:', err);
-    res.status(500).send('Server verification error.');
+    return res.status(500).send('Server verification error.');
   }
 });
-
 // GET /api/ads - list ads (live only by default)
 app.get('/api/ads', async (req, res) => {
   try {
