@@ -507,6 +507,109 @@ app.post('/api/kyc/submit', uploadHandler.fields([
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
+////////////////////////////////////////////////////////////////////
+// Routes: registration and login (kept from your version, with small safety checks)
+/////////////////////////////////////////////////////////////////////
+app.post('/api/register', async (req, res) => {
+  try {
+    const { role, email, phone, fullname, username, state, lga, city, gender, specializations, password } = req.body || {};
+    if (!email || !validEmail(email)) return res.status(400).json({ success:false, message:'Invalid email' });
+    if (!phone || !validPhone(phone)) return res.status(400).json({ success:false, message:'Invalid phone' });
+    if (!fullname || fullname.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid full name' });
+    if (!username || username.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid username' });
+    if (!state || !lga || !city) return res.status(400).json({ success:false, message:'State/LGA/City required' });
+    if (!password || password.length < 6) return res.status(400).json({ success:false, message:'Password must be at least 6 characters' });
+
+    const client = await pool.connect();
+    try {
+      const dupQuery = `SELECT email, username, phone FROM users WHERE email = $1 OR username = $2 OR phone = $3 LIMIT 1`;
+      const dupRes = await client.query(dupQuery, [email, username, phone]);
+      if (dupRes.rows.length) return res.status(409).json({ success:false, message: 'Email, username or phone already exists' });
+
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(password, salt);
+      const newUser = {
+        id: uid(),
+        role: role || 'client',
+        email, phone, fullname, username,
+        state, lga, city,
+        gender: gender || 'other',
+        specializations: Array.isArray(specializations) ? specializations : [],
+        password_hash: hash
+      };
+      const insertSql = `
+        INSERT INTO users (id, role, email, phone, fullname, username, state, lga, city, gender, specializations, password_hash)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `;
+      await client.query(insertSql, [
+        newUser.id, newUser.role, newUser.email, newUser.phone, newUser.fullname, newUser.username,
+        newUser.state, newUser.lga, newUser.city, newUser.gender, newUser.specializations, newUser.password_hash
+      ]);
+      return res.json({ success:true, message:'Account created successfully', userId: newUser.id });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Server error /api/register', err);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { login, password, email } = req.body || {};
+    if (!login || !password) return res.status(400).json({ success: false, message: 'Login and password required' });
+    const loginValue = String(login).trim();
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+    const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
+
+    if (loginValue === ADMIN_USERNAME) {
+      if (ADMIN_PASSWORD_HASH && await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) {
+        return res.json({ success:true, message:'Admin login successful', role:'admin', user:null });
+      }
+      return res.status(401).json({ success:false, message:'Invalid credentials' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const q = `SELECT * FROM users WHERE email=$1 OR username=$1 OR phone=$1 LIMIT 1`;
+      const r = await client.query(q, [loginValue]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'User not found' });
+      const user = r.rows[0];
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) return res.status(401).json({ success:false, message:'Incorrect password' });
+
+      const safeUser = {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        phone: user.phone,
+        fullname: user.fullname,
+        username: user.username,
+        city: user.city,
+        kyc_status: user.kyc_status,
+        avatar_url: user.avatar_url,
+        online: user.online,
+        account_details: user.account_details
+      };
+
+      // staff redirect example
+      if ((user.role || '').toLowerCase() === 'staff') {
+        const BASE = process.env.ADMIN_UI_BASE || 'https://your-admin-ui.example.com';
+        return res.json({ success:true, message:'Staff login', role:'staff', user:safeUser, redirect: BASE + '/staff' });
+      }
+
+      return res.json({ success:true, message:'Login successful', role:user.role||'client', user:safeUser });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('Server error /api/login', e);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.get('/', (req,res)=> res.send('TradeHive backend running'));
 
 // GET /api/kyc/status/:userId
 app.get('/api/kyc/status/:id', async (req, res) => {
