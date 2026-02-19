@@ -28,7 +28,7 @@
   .ad-body{flex:1;display:flex;flex-direction:column;gap:6px}
   .ad-title{font-weight:900}
   .ad-desc{color:var(--muted);font-size:13px}
-  .ad-meta{display:flex;gap:12px;align-items:center;font-size:13px;color:var(--muted)}
+  .ad-meta{display:flex;gap:12px;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap}
   .ad-actions{display:flex;gap:8px;margin-top:8px}
   .btn{padding:8px 12px;border-radius:10px;border:0;cursor:pointer;font-weight:800}
   .btn.approve{background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014}
@@ -36,10 +36,13 @@
   .btn.view{background:transparent;border:1px dashed var(--border);color:var(--muted)}
   .badge{padding:6px 8px;border-radius:999px;font-weight:800;background:#f8fafc;border:1px solid var(--border);font-size:12px}
   .panel{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--border);display:flex;flex-direction:column;gap:10px}
+  .panel .meta-row{display:flex;flex-direction:column;gap:6px}
   .modal-backdrop{position:fixed;inset:0;display:none;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:2000}
   .modal{width:94%;max-width:880px;background:var(--card);border-radius:12px;padding:14px;max-height:90vh;overflow:auto}
   .modal-gallery{display:flex;gap:8px;flex-wrap:wrap}
   .modal-gallery img{width:180px;height:120px;object-fit:cover;border-radius:8px}
+  .muted-note{font-size:13px;color:var(--muted)}
+  .small-input{padding:6px;border-radius:8px;border:1px solid var(--border)}
   @media (max-width:980px){
     .grid{grid-template-columns:1fr}
     .ad-media{width:120px;height:90px}
@@ -59,10 +62,10 @@
       <div class="top-row">
         <div>
           <h1 id="adminTitle" class="title">Ads — Pending Approval</h1>
-          <div class="small-muted">Review ads and approve or decline.</div>
+          <div class="small-muted">Review ads and approve or decline. Uses server-side status = <code>pending</code>.</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <select id="refreshInterval" style="padding:6px;border-radius:8px;border:1px solid var(--border)">
+          <select id="refreshInterval" class="small-input">
             <option value="0">Auto-refresh off</option>
             <option value="10">10s</option>
             <option value="30">30s</option>
@@ -93,6 +96,13 @@
             <h4 style="margin:0">Creator</h4>
             <div id="sellerInfo" class="small-muted">Seller id shown on selection</div>
           </div>
+          <div>
+            <h4 style="margin:0">Quick actions</h4>
+            <div class="meta-row">
+              <button id="approveSelected" class="btn approve" disabled>Approve selected</button>
+              <button id="declineSelected" class="btn decline" disabled>Decline selected</button>
+            </div>
+          </div>
         </aside>
       </div>
     </main>
@@ -121,8 +131,21 @@
   </div>
 
 <script>
+/*
+  Updated Admin Ads verification page.
+  - Now requests ads with status=pending (matches your backend).
+  - If no results found we fall back to checking pending_payment (legacy).
+  - Approve uses PATCH /api/ads/:id with { status: 'live' } (falls back to POST endpoints if needed).
+  - Decline uses PATCH /api/ads/:id with { status: 'removed' } (falls back similarly).
+  - Credentials are included for sessions/cookies.
+*/
+
 const BACKEND_BASE = location.origin;
-const LIST_URL = BACKEND_BASE + '/api/ads?status=pending_payment';
+
+// Primary list url uses status=pending to match backend
+const PRIMARY_LIST_URL = BACKEND_BASE + '/api/ads?status=pending';
+const LEGACY_LIST_URL = BACKEND_BASE + '/api/ads?status=pending_payment';
+
 let ADS = [];
 let selectedAd = null;
 let autoRefreshTimer = null;
@@ -141,31 +164,61 @@ const modalClose = document.getElementById('modalClose');
 const modalApprove = document.getElementById('modalApprove');
 const modalDecline = document.getElementById('modalDecline');
 
+const approveSelectedBtn = document.getElementById('approveSelected');
+const declineSelectedBtn = document.getElementById('declineSelected');
+
 async function fetchPendingAds(q) {
   try {
-    const url = new URL(LIST_URL);
+    const url = new URL(PRIMARY_LIST_URL);
     if (q) url.searchParams.set('q', q);
     const resp = await fetch(url.toString(), { credentials: 'include' });
-    if (!resp.ok) { listEl.innerHTML = ''; emptyEl.style.display = 'block'; console.error('GET /api/ads failed', resp.status); return; }
+    if (!resp.ok) {
+      console.warn('Primary GET /api/ads failed', resp.status);
+      // try fallback legacy
+      return fetchLegacy(q);
+    }
+    const data = await resp.json().catch(()=>null);
+    ADS = Array.isArray(data) ? data : (data && data.ads ? data.ads : []);
+    // If zero results try legacy endpoint (makes migration smoother)
+    if ((!ADS || !ADS.length) && !q) {
+      const legacy = await fetchLegacy(q);
+      if (legacy) return;
+    }
+    renderAds(ADS);
+  } catch (e) {
+    console.error('fetchPendingAds error', e);
+    await fetchLegacy(q);
+  }
+}
+
+async function fetchLegacy(q){
+  try {
+    const url = new URL(LEGACY_LIST_URL);
+    if (q) url.searchParams.set('q', q);
+    const resp = await fetch(url.toString(), { credentials: 'include' });
+    if (!resp.ok) { listEl.innerHTML = ''; emptyEl.style.display = 'block'; console.error('Fallback GET /api/ads failed', resp.status); return false; }
     const data = await resp.json().catch(()=>null);
     ADS = Array.isArray(data) ? data : (data && data.ads ? data.ads : []);
     renderAds(ADS);
+    return true;
   } catch (e) {
-    console.error('fetchPendingAds', e);
+    console.error('fetchLegacy error', e);
     listEl.innerHTML = ''; emptyEl.style.display = 'block';
+    return false;
   }
 }
 
 function renderAds(list) {
   listEl.innerHTML = '';
-  if (!list || !list.length) { emptyEl.style.display = 'block'; return; }
+  if (!list || !list.length) { emptyEl.style.display = 'block'; approveSelectedBtn.disabled = true; declineSelectedBtn.disabled = true; return; }
   emptyEl.style.display = 'none';
   list.forEach(ad => {
     const el = document.createElement('div');
     el.className = 'ad-card';
-    const imgSrc = Array.isArray(ad.images) && ad.images.length ? ad.images[0] : (ad.image || '');
+    const firstImage = Array.isArray(ad.images) && ad.images.length ? ad.images[0] : (ad.image || '');
+    const safeImg = escapeHtml(firstImage || '');
     el.innerHTML = `
-      <div class="ad-media"><img src="${escapeHtml(imgSrc)}" alt=""></div>
+      <div class="ad-media"><img src="${safeImg}" alt=""></div>
       <div class="ad-body">
         <div style="display:flex;justify-content:space-between">
           <div style="flex:1">
@@ -175,7 +228,8 @@ function renderAds(list) {
               <div class="badge">₦${Number(ad.price||0).toLocaleString()}</div>
               <div>${ad.quantity || ad.qty || ''}</div>
               <div>${escapeHtml(ad.location || '')}</div>
-              <div>${escapeHtml(ad.seller_id || '')}</div>
+              <div>seller: ${escapeHtml(ad.seller_id || '')}</div>
+              <div>${ad.created_at ? new Date(ad.created_at).toLocaleString() : ''}</div>
             </div>
           </div>
         </div>
@@ -191,13 +245,26 @@ function renderAds(list) {
     el.querySelector('[data-action="view"]').addEventListener('click', ()=> openModal(ad));
     el.querySelector('[data-action="approve"]').addEventListener('click', ()=> confirmAndPatch(ad.id, 'live'));
     el.querySelector('[data-action="decline"]').addEventListener('click', ()=> confirmAndPatch(ad.id, 'removed'));
+
+    // click anywhere to select (quick)
+    el.addEventListener('click', (ev) => {
+      if (ev.target && ev.target.dataset && ev.target.dataset.action) return; // skip button clicks handled above
+      setSelectedAd(ad);
+    });
   });
+}
+
+function setSelectedAd(ad){
+  selectedAd = ad;
+  selectedInfo.innerHTML = `<strong>${escapeHtml(ad.title || '')}</strong><div class="small-muted">Ad id: ${ad.id}</div>`;
+  sellerInfo.textContent = `Seller id: ${ad.seller_id || ''}`;
+  approveSelectedBtn.disabled = false;
+  declineSelectedBtn.disabled = false;
 }
 
 function openModal(ad) {
   selectedAd = ad;
-  selectedInfo.innerHTML = `<strong>${escapeHtml(ad.title || '')}</strong><div class="small-muted">Ad id: ${ad.id}</div>`;
-  sellerInfo.textContent = `Seller id: ${ad.seller_id || ''}`;
+  setSelectedAd(ad);
   modalTitle.textContent = ad.title || 'Untitled';
   modalMeta.textContent = `₦${Number(ad.price||0).toLocaleString()} • ${ad.quantity || ''} • ${escapeHtml(ad.location||'')}`;
   modalDesc.textContent = ad.description || '';
@@ -230,6 +297,17 @@ modalDecline.addEventListener('click', ()=> {
   confirmAndPatch(selectedAd.id, 'removed');
 });
 
+approveSelectedBtn.addEventListener('click', ()=> {
+  if (!selectedAd) return;
+  if (!confirm(`Approve selected "${selectedAd.title}"?`)) return;
+  confirmAndPatch(selectedAd.id, 'live');
+});
+declineSelectedBtn.addEventListener('click', ()=> {
+  if (!selectedAd) return;
+  if (!confirm(`Decline selected "${selectedAd.title}"?`)) return;
+  confirmAndPatch(selectedAd.id, 'removed');
+});
+
 async function confirmAndPatch(adId, statusValue) {
   try {
     const resp = await fetch(BACKEND_BASE + '/api/ads/' + encodeURIComponent(adId), {
@@ -242,20 +320,25 @@ async function confirmAndPatch(adId, statusValue) {
     let data = null;
     try { data = raw ? JSON.parse(raw) : null; } catch(e){ data = null; }
     if (resp.ok) {
-      alert('OK');
+      // remove ad from list locally
       ADS = ADS.filter(a => a.id !== adId);
       renderAds(ADS);
       closeModal();
+      alert('OK');
       return;
     }
-    // fallback: try POST approve/decline endpoints
+
+    // fallback: try POST approve/decline endpoints (/api/admin/ads/:id/approve, /api/ads/:id/approve)
     if (!resp.ok) {
       if (statusValue === 'live') {
-        await tryFallbackApprove(adId);
+        const ok = await tryFallbackApprove(adId);
+        if (ok) return;
       } else {
-        await tryFallbackDecline(adId);
+        const ok = await tryFallbackDecline(adId);
+        if (ok) return;
       }
     }
+
     console.error('PATCH /api/ads/:id failed', resp.status, raw, data);
     alert('Update failed. Check console for details.');
   } catch (e) {
@@ -269,9 +352,10 @@ async function tryFallbackApprove(adId) {
     const urls = ['/api/admin/ads/' + adId + '/approve', '/api/ads/' + adId + '/approve'];
     for (const u of urls) {
       const resp = await fetch(BACKEND_BASE + u, { method: 'POST', credentials: 'include' });
-      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return; }
+      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return true; }
     }
   } catch (e) { console.error('fallbackApprove error', e); }
+  return false;
 }
 
 async function tryFallbackDecline(adId) {
@@ -279,9 +363,10 @@ async function tryFallbackDecline(adId) {
     const urls = ['/api/admin/ads/' + adId + '/decline', '/api/ads/' + adId + '/decline'];
     for (const u of urls) {
       const resp = await fetch(BACKEND_BASE + u, { method: 'POST', credentials: 'include' });
-      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return; }
+      if (resp.ok) { ADS = ADS.filter(a => a.id !== adId); renderAds(ADS); closeModal(); return true; }
     }
   } catch (e) { console.error('fallbackDecline error', e); }
+  return false;
 }
 
 document.getElementById('refreshBtn').addEventListener('click', ()=> fetchPendingAds(document.getElementById('q').value.trim()));
@@ -296,7 +381,13 @@ document.getElementById('refreshInterval').addEventListener('change', (e) => {
 
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+// initial fetch
 fetchPendingAds();
+
+// Optional: refresh when coming back to tab
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') fetchPendingAds(document.getElementById('q').value.trim());
+});
 </script>
 </body>
 </html>
