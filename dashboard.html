@@ -8,7 +8,6 @@
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 
 <style>
-  /* (Exact same CSS as your original dashboard — preserved) */
   :root{
     --white: #ffffff;
     --page-bg: #f6f7f9;
@@ -145,6 +144,15 @@
   .nav-item.active{ color:var(--gold1); }
   .fab{ position:fixed; left:50%; transform:translateX(-50%); bottom:36px; width:68px; height:68px; border-radius:999px; background:linear-gradient(180deg,var(--gold1),var(--gold2)); color:#071014; display:flex; align-items:center; justify-content:center; box-shadow:0 18px 40px rgba(0,0,0,0.28); z-index:2100; cursor:pointer; font-weight:900; border:6px solid rgba(7,16,20,0.06) }
 
+  /* Bank modal (NEW: centered, good design) */
+  .bank-backdrop { position:fixed; inset:0; display:none; background:rgba(0,0,0,0.45); align-items:center; justify-content:center; z-index:2600; }
+  .bank-modal { width:94%; max-width:480px; background:var(--card); border-radius:14px; padding:18px; box-shadow:0 40px 120px rgba(2,6,23,0.45); border:0; }
+  .bank-modal h3 { margin:0 0 10px 0; font-size:18px; font-weight:900; }
+  .bank-row { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .bank-row input { padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06); width:100%; }
+  .bank-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+  .bank-note { font-size:13px; color:var(--muted); margin-top:6px; }
+
   body.dark { --page-bg:#061017; --card:#071018; --text:#e6eef8; --muted:#9aa0a6; --shadow: rgba(0,0,0,0.5); --nav-bg:#071018; --nav-icon:#9aa0a6; }
 
   @media(max-width:720px){
@@ -247,22 +255,24 @@
       <a class="menu-item" href="#" id="linkContact"><div class="mi-icon" aria-hidden="true">✉️</div><div><strong>Contact us</strong><div style="font-size:12px;color:var(--muted)">Get help & support</div></div></a>
       <a class="menu-item" href="#" id="linkLogout"><div class="mi-icon" aria-hidden="true">🚪</div><div><strong>Logout</strong><div style="font-size:12px;color:var(--muted)">Sign out</div></div></a>
     </nav>
+  </aside>
 
-    <!-- BANK DETAILS FORM (added) -->
-    <div style="margin-top:10px;border-top:1px solid rgba(12,12,12,0.06);padding-top:10px;">
-      <h4 style="margin:6px 0 8px 0">Payout / Bank details</h4>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <input id="bankName" placeholder="Account name" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
-        <input id="bankAccount" placeholder="Account number" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
-        <input id="bankCode" placeholder="Bank code" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn ghost" id="loadBank">Load</button>
-          <button class="btn gold" id="saveBank">Save bank</button>
-        </div>
-        <div id="bankMsg" style="font-size:13px;color:var(--muted)"></div>
+  <!-- Bank modal: centered pop-up -->
+  <div class="bank-backdrop" id="bankBackdrop" aria-hidden="true">
+    <div class="bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankTitle">
+      <h3 id="bankTitle">Payout / Bank details</h3>
+      <div class="bank-row">
+        <input id="bankName" placeholder="Account name" aria-label="Account name" />
+        <input id="bankAccount" placeholder="Account number" aria-label="Account number" />
+        <input id="bankCode" placeholder="Bank code" aria-label="Bank code" />
+        <div class="bank-note" id="bankMsg">Enter account name, account number and bank code. This will be used to pay out when orders are released.</div>
+      </div>
+      <div class="bank-actions">
+        <button class="btn ghost" id="bankCancel">Cancel</button>
+        <button class="btn gold" id="bankSave">Save</button>
       </div>
     </div>
-  </aside>
+  </div>
 
   <!-- main content area -->
   <main class="content" id="mainContent" role="main">
@@ -277,7 +287,7 @@
       <!-- subcats will be injected -->
     </div>
 
-    <section class="grid" id="products" aria-live="polite">
+<section class="grid" id="products" aria-live="polite">
       <!-- products injected by JS -->
     </section>
   </main>
@@ -431,14 +441,19 @@
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
   </nav>
-  <script>
+
+<script>
 /* ============================
-   Storage keys & helpers (unchanged, kept for compatibility)
+   Storage keys & helpers
    ============================ */
 const USER_KEY = 'wire_user_v1';
 const CART_KEY = 'wire_cart_v1';
 function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
-function writeUser(u){ localStorage.setItem(USER_KEY, JSON.stringify(u)); renderCart(); }
+function writeUser(u){
+  try { localStorage.setItem(USER_KEY, JSON.stringify(u)); } catch(e){}
+  renderCart();
+  setAvatarFromUser();
+}
 function readCart(){ try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch(e){ return []; } }
 function writeCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); renderCart(); }
 
@@ -453,8 +468,9 @@ function setAvatarFromUser(){
   const avatarWrap = document.getElementById('avatarWrap');
   const mini = document.getElementById('miniAvatar');
 
-  if(u){
-    nameEl.textContent = u.fullname || u.username || 'User';
+  if(u && u.id){
+    // Prefer fullname > username > email
+    nameEl.textContent = u.fullname || u.username || u.email || 'User';
     emailEl.textContent = u.phone || u.email || 'Member';
     if(u.avatarUrl){
       avatarBox.innerHTML = `<img src="${u.avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover">`;
@@ -477,728 +493,34 @@ function setAvatarFromUser(){
 setAvatarFromUser();
 
 /* ---------------------------
-  Status switch (NEW behavior integrated)
-   - toggles user online/offline on backend
-   - updates avatar border & converts seller ads to live/offline on server
-   --------------------------- */
-const statusSwitch = document.getElementById('statusSwitch');
-const user = readUser();
-statusSwitch.checked = (user && user.online) ? true : false;
-statusSwitch.addEventListener('change', async ()=>{
-  let u = readUser() || { username:'guest' };
-  u.online = statusSwitch.checked;
-  writeUser(u);
-  setAvatarFromUser();
-  renderProducts();
-  showToast(u.online ? 'You are online' : 'You are offline');
-
-  // POST to backend to persist online status (and flip ads live/offline)
-  try {
-    const uid = u.id;
-    if (!uid) {
-      console.warn('No user id in local storage; cannot persist online state');
-      return;
-    }
-    const payload = { online: Boolean(u.online) };
-    // attempt to get geolocation when user switches online (optional)
-    if (navigator.geolocation && u.online) {
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        payload.lat = pos.coords.latitude;
-        payload.lng = pos.coords.longitude;
-        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload)
-        }).catch(e => console.warn('persist online failed', e));
-      }, async () => {
-        // geolocation denied or failed -> still persist online without coords
-        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(payload)
-        }).catch(e => console.warn('persist online failed', e));
-      }, { timeout: 6000 });
-    } else {
-      // no geolocation or user offline -> just persist
-      await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload)
-      }).catch(e => console.warn('persist online failed', e));
-    }
-  } catch (e) { console.warn('online toggle error', e); }
-});
-
-
-/* ---------------------------
-  Bank form handlers (NEW)
-   - Save bank details to backend: POST /api/users/:id/bank
-   - Load bank details from localStorage user object (if available)
-   --------------------------- */
-document.getElementById('saveBank').addEventListener('click', async () => {
+  Helper: fetch fresh user from backend using existing user.id
+  This calls GET /api/kyc/status/:id which your backend already provides and returns user details.
+  If it succeeds we merge and persist the user to localStorage.
+*/
+async function refreshUserFromServer() {
   const u = readUser();
-  if (!u || !u.id) { showToast('Sign in to save bank details'); return; }
-  const acc = document.getElementById('bankAccount').value.trim();
-  const name = document.getElementById('bankName').value.trim();
-  const code = document.getElementById('bankCode').value.trim();
-  if (!acc || !name || !code) { document.getElementById('bankMsg').textContent = 'Account name, number and bank code required'; return; }
-  document.getElementById('bankMsg').textContent = 'Saving...';
+  if (!u || !u.id) return null;
   try {
-    const res = await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(u.id) + '/bank', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ account_number: acc, bank_code: code, name })
-    });
-    const json = await res.json().catch(()=>null);
-    if (res.ok && json && json.success) {
-      document.getElementById('bankMsg').textContent = 'Saved';
-      // persist locally as well
-      u.account_details = u.account_details || {};
-      u.account_details.account_number = acc;
-      u.account_details.bank_code = code;
-      u.account_details.name = name;
-      writeUser(u);
-    } else {
-      document.getElementById('bankMsg').textContent = (json && json.message) ? json.message : 'Save failed';
-    }
+    const res = await fetch((location.origin || '') + '/api/kyc/status/' + encodeURIComponent(u.id), { credentials: 'include' });
+    if (!res.ok) return null;
+    const j = await res.json().catch(()=>null);
+    if (!j || !j.success) return null;
+    // j.user contains user fields (id, email, fullname, username, etc.)
+    const serverUser = j.user || {};
+    // merge account_details if available in serverUser or latest_request
+    const merged = Object.assign({}, u, serverUser);
+    // also attempt to read latest_request.admin_note etc (from KYC endpoint)
+    writeUser(merged);
+    return merged;
   } catch (e) {
-    console.error('save bank', e);
-    document.getElementById('bankMsg').textContent = 'Network error';
-  }
-});
-
-document.getElementById('loadBank').addEventListener('click', (e) => {
-  const u = readUser();
-  if (!u || !u.account_details) { showToast('No bank details found'); return; }
-  document.getElementById('bankAccount').value = u.account_details.account_number || '';
-  document.getElementById('bankName').value = u.account_details.name || '';
-  document.getElementById('bankCode').value = u.account_details.bank_code || '';
-  document.getElementById('bankMsg').textContent = 'Loaded from local memory';
-});
-/* ---------------------------
-  Subcategories + categories (unchanged)
-   --------------------------- */
-const SUBS = {
-  'All': ['All'],
-  'Foods': ['All','Food','Pastry','Items'],
-  'Clothing': ['All','Men','Women','Children','Shoes','Jewellery'],
-  'Electronics & Gadgets': ['All','Phones','Laptop','MP3','iPad','Watch','Fans','Others']
-};
-const catEls = document.querySelectorAll('.cat');
-const subRoot = document.getElementById('subcats');
-function buildSubcats(active){
-  subRoot.innerHTML = '';
-  const subs = SUBS[active] || ['All'];
-  subs.forEach((s,i)=>{
-    const d = document.createElement('div'); d.className='subcat' + (i===0?' active':''); d.textContent=s; d.dataset.sub=s;
-    d.addEventListener('click', ()=>{ document.querySelectorAll('.subcat').forEach(x=>x.classList.remove('active')); d.classList.add('active'); renderProducts(); });
-    subRoot.appendChild(d);
-  });
-}
-catEls.forEach(c=> c.addEventListener('click', ()=>{
-  catEls.forEach(x=>x.classList.remove('active'));
-  c.classList.add('active');
-  buildSubcats(c.dataset.cat);
-  renderProducts();
-}));
-buildSubcats('All');
-
-/* ---------------------------
-  PRODUCTS fallback (unchanged demo items)
-   --------------------------- */
-const PRODUCTS = [
-  { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
-      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg',
-      'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg'
-    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food', created_at: new Date().toISOString()},
-  { id:'p2', title:'Assorted Pastry Box', desc:'Delicious pastry box for events.', images:[
-      'https://i.postimg.cc/SsJHtvkf/IMG-20260214-162941.jpg',
-      'https://i.postimg.cc/3x3z0XgY/pastry1.jpg'
-    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry', created_at: new Date().toISOString()},
-  { id:'p3', title:'Designer Ankara Shirt (XL)', desc:'Handmade Ankara shirt — top quality fabric.', images:[
-      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg',
-      'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg'
-    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men', created_at: new Date().toISOString()},
-  { id:'p4', title:'Women Floral Dress', desc:'Summer women dress, size M.', images:[
-      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg',
-      'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg'
-    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women', created_at: new Date().toISOString()},
-  { id:'p5', title:'Portable Radio', desc:'Compact radio with excellent sound quality.', images:[
-      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg',
-      'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg'
-    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio', created_at: new Date().toISOString()},
-  { id:'p6', title:'Table Fan 3-speed', desc:'Durable table fan for home.', images:[
-      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg',
-      'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg'
-    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans', created_at: new Date().toISOString()}
-];
-
-/* ---------------------------
-  Backend integration
-   - Use location.origin as BACKEND_BASE to avoid hard-coded host
-   --------------------------- */
-const BACKEND_BASE = (location.origin || 'https://tradehive-s4e6.onrender.com');
-/* helper: map backend ad row -> UI product shape */
-function mapBackendAdToProduct(a) {
-  const images = (a.images && Array.isArray(a.images) && a.images.length) ? a.images.slice() : [];
-  if(!images.length && a.images && typeof a.images === 'string') {
-    try {
-      const parsed = JSON.parse(a.images);
-      if(Array.isArray(parsed)) images.push(...parsed);
-    } catch(e){}
-    if(!images.length) images.push(a.images);
-  }
-  if(!images.length) images.push('https://i.postimg.cc/3x3z0XgY/pastry1.jpg');
-
-  return {
-    id: String(a.id || a.ad_id || a._id || ('ad_' + Math.random().toString(36).slice(2,9))),
-    title: a.title || a.name || 'Untitled',
-    desc: a.description || a.desc || '',
-    images,
-    price: Number(a.price || a.amount || 0),
-    qty: Number(a.quantity || a.qty || 1),
-    loc: a.location || a.city || '',
-    status: String(a.status || '').toLowerCase(),
-    live: String(a.status || '').toLowerCase() === 'live' || String(a.status || '').toLowerCase() === 'active',
-    seller_online: (a.seller_online !== undefined) ? Boolean(a.seller_online) : true,
-    category: a.category || a.category_name || 'Other',
-    sub: a.subcategory || a.sub || 'All',
-    created_at: a.created_at || a.createdAt || new Date().toISOString()
-  };
-}
-
-/* ---------------------------
-  Render products (uses backend /api/ads?status=live for public listing)
-   - For dashboard view we rely on local demo items when backend unreachable
-   --------------------------- */
-const productsRoot = document.getElementById('products');
-let BACKEND_ADS = null;
-let BACKEND_AVAILABLE = false;
-
-async function tryFetchBackendAds(timeoutMs = 5000) {
-  const controller = new AbortController();
-  const id = setTimeout(()=> controller.abort(), timeoutMs);
-  try {
-    // For dashboard, we fetch /api/my/ads only if user logged in
-    const user = readUser();
-    if (!user || !user.id) {
-      clearTimeout(id);
-      BACKEND_AVAILABLE = false;
-      BACKEND_ADS = null;
-      return null;
-    }
-    const res = await fetch(BACKEND_BASE + '/api/my/ads?user_id=' + encodeURIComponent(user.id), { signal: controller.signal, credentials: 'include' });
-    clearTimeout(id);
-    if(!res.ok) { BACKEND_AVAILABLE = false; BACKEND_ADS = null; return null; }
-    const json = await res.json().catch(()=>null);
-    if(!json || !json.success || !Array.isArray(json.ads)) {
-      if(Array.isArray(json)) { BACKEND_ADS = json; BACKEND_AVAILABLE = true; return json; }
-      BACKEND_AVAILABLE = false; BACKEND_ADS = null; return null;
-    }
-    BACKEND_ADS = json.ads;
-    BACKEND_AVAILABLE = true;
-    return json.ads;
-  } catch (err) {
-    clearTimeout(id);
-    BACKEND_AVAILABLE = false;
-    BACKEND_ADS = null;
+    console.warn('refreshUserFromServer failed', e);
     return null;
   }
 }
 
-function computeExpiry(createdAtIso) {
-  try {
-    const created = new Date(createdAtIso);
-    const expiry = new Date(created.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return expiry;
-  } catch(e){ return null; }
-}
-
-function statusBadgeHtml(status, createdAt) {
-  const st = String(status || '').toLowerCase();
-  if (st === 'pending' || st === 'pending_verification' || st === 'pending_payment') {
-    return `<div style="padding:6px 10px;border-radius:999px;background:#f2f2f2;color:#333;font-weight:900;display:inline-flex;align-items:center;gap:8px;animation:blnk 1.2s infinite">● PENDING</div>`;
-  }
-  if (st === 'live' || st === 'active') {
-    return `<div class="live-pill"><span class="live-dot"></span> LIVE</div>`;
-  }
-  if (st === 'offline') {
-    return `<div style="padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(12,12,12,0.06);color:var(--muted);font-weight:900">OFFLINE</div>`;
-  }
-  if (st === 'removed') {
-    return `<div style="padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(12,12,12,0.06);color:#c0392b;font-weight:900">REMOVED</div>`;
-  }
-  if (st === 'expired') {
-    return `<div style="padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(12,12,12,0.06);color:#d64541;font-weight:900">EXPIRED</div>`;
-  }
-  // fallback
-  return `<div style="padding:6px 10px;border-radius:999px;background:#f8fafc;border:1px solid rgba(12,12,12,0.06);color:var(--muted);font-weight:900">${(st||'draft').toUpperCase()}</div>`;
-}
-
-function isExpired(createdAt) {
-  const expiry = computeExpiry(createdAt);
-  if (!expiry) return false;
-  return Date.now() > expiry.getTime();
-}
-
-function renderProducts(){
-  productsRoot.innerHTML = '';
-
-  // Determine active filters
-  const activeCat = document.querySelector('.cat.active').dataset.cat;
-  const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
-
-  // If backend available and returned ads, map them
-  let list = [];
-  if(BACKEND_AVAILABLE && Array.isArray(BACKEND_ADS)) {
-    list = BACKEND_ADS.map(mapBackendAdToProduct);
-  } else {
-    list = PRODUCTS.slice();
-  }
-
-  // Filter using active cat/sub
-  const filtered = list.filter(p=>{
-    if(activeCat !== 'All' && p.category !== activeCat) return false;
-    if(activeSub !== 'All' && p.sub !== activeSub) return false;
-    return true;
-  });
-
-  // render each product (exact same DOM structure as before) but with seller controls
-  filtered.forEach(p=>{
-    const el = document.createElement('article'); el.className='product';
-    const expired = isExpired(p.created_at);
-    const status = expired ? 'expired' : (p.status || (p.live ? 'live' : 'offline'));
-    el.innerHTML = `
-      <div class="media" role="button" tabindex="0" data-id="${p.id}">
-        <img src="${p.images[0]}" alt="${escapeHtml(p.title)}">
-        <div style="position:absolute;left:12px;top:12px">${statusBadgeHtml(status, p.created_at)}</div>
-      </div>
-      <div class="body">
-        <div class="p-title">${escapeHtml(p.title)}</div>
-        <div class="p-desc">${escapeHtml(p.desc)}</div>
-        <div class="meta"><div class="price">₦${Number(p.price).toLocaleString()}</div><div class="loc">${p.loc} • ${p.qty} pcs</div></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-          <div style="font-size:12px;color:var(--muted)">Posted: ${new Date(p.created_at).toLocaleString()}</div>
-          <div style="flex:1"></div>
-          <div style="font-size:12px;color:var(--muted)">Status: <strong>${status.toUpperCase()}</strong></div>
-        </div>
-        <div class="actions" style="margin-top:12px">
-          <!-- Seller actions -->
-          <button class="btn ghost btn-edit" data-id="${p.id}">Edit</button>
-          ${status === 'expired' ? `<button class="btn gold btn-reawke" data-id="${p.id}">Re-awake (₦${(Number(parseFloat(1000))||1000)})</button>` :
-            `<button class="btn gold btn-toggle" data-id="${p.id}" data-status="${status === 'live' ? 'offline' : 'live'}">${status === 'live' ? 'Set offline' : 'Set online'}</button>`}
-          <button class="btn ghost btn-delete" data-id="${p.id}">Delete</button>
-        </div>
-      </div>
-    `;
-    productsRoot.appendChild(el);
-
-    // handlers
-    el.querySelector('.btn-delete').addEventListener('click', ()=> handleDeleteAd(p));
-    const toggleBtn = el.querySelector('.btn-toggle');
-    if (toggleBtn) toggleBtn.addEventListener('click', ()=> handleToggleAd(p, toggleBtn.dataset.status));
-    const reawkeBtn = el.querySelector('.btn-reawke');
-    if (reawkeBtn) reawkeBtn.addEventListener('click', ()=> handleReawake(p));
-    const editBtn = el.querySelector('.btn-edit');
-    if (editBtn) editBtn.addEventListener('click', ()=> { alert('Edit flow not included — open sell.html to edit the ad.'); });
-
-    el.querySelector('.media').addEventListener('click', ()=> openViewModal(p));
-    el.querySelector('.media').addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') openViewModal(p); });
-  });
-}
-
 /* ---------------------------
-  Sellers actions
-   - delete => PATCH /api/ads/:id/status { status: 'removed' }
-   - toggle => PATCH /api/ads/:id/status { status: 'live' / 'offline' }
-   - reawke => POST /api/ads (create new ad with ad details + triggers payment)
-   --------------------------- */
-async function handleDeleteAd(ad) {
-  if (!confirm(`Delete this ad "${ad.title}"? This will mark it removed.`)) return;
-  try {
-    const res = await fetch(BACKEND_BASE + '/api/ads/' + encodeURIComponent(ad.id) + '/status', {
-      method: 'PATCH',
-      headers: { 'Content-Type':'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ status: 'removed' })
-    });
-    const j = await res.json().catch(()=>null);
-    if (res.ok && j && j.success) {
-      showToast('Ad removed');
-      await refreshAds(); renderProducts();
-    } else {
-      showToast((j && j.message) ? j.message : 'Failed to remove');
-      console.error('delete failed', j);
-    }
-  } catch (e) {
-    console.error('delete ad error', e);
-    showToast('Network error');
-  }
-}
-
-async function handleToggleAd(ad, toStatus) {
-  if (!confirm(`Set ad "${ad.title}" status to ${toStatus}?`)) return;
-  try {
-    const res = await fetch(BACKEND_BASE + '/api/ads/' + encodeURIComponent(ad.id) + '/status', {
-      method: 'PATCH',
-      headers: { 'Content-Type':'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ status: toStatus })
-    });
-    const j = await res.json().catch(()=>null);
-    if (res.ok && j && j.success) {
-      showToast('Status updated');
-      await refreshAds(); renderProducts();
-    } else {
-      showToast((j && j.message) ? j.message : 'Failed to update status');
-      console.error('toggle failed', j);
-    }
-  } catch (e) {
-    console.error('toggle ad error', e);
-    showToast('Network error');
-  }
-}
-
-async function handleReawake(ad) {
-  if (!confirm(`Re-awake "${ad.title}" — this requires a ₦${Number(parseFloat(1000))||1000} payment. Proceed to payment?`)) return;
-
-  // Build a payload for POST /api/ads using existing ad details so server creates a new payment/init
-  const user = readUser();
-  if (!user || !user.id) { showToast('Sign in to re-awake'); return; }
-
-  // Prepare images array; if ad.images contains Cloudinary public ids, pass them as-is.
-  const payload = {
-    seller_id: user.id,
-    title: ad.title,
-    description: ad.desc || ad.description || '',
-    images: ad.images || [],
-    price: ad.price || 0,
-    currency: 'NGN',
-    quantity: ad.qty || ad.quantity || 1,
-    location: ad.loc || '',
-    category: ad.category || '',
-    subcategory: ad.sub || '',
-    // idempotency_key helps avoid double-init if you press re-awake multiple times
-    idempotency_key: 'reawaken_' + ad.id
-  };
-try {
-    const res = await fetch(BACKEND_BASE + '/api/ads', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    });
-    const json = await res.json().catch(()=>null);
-    if (res.ok && json && json.success && json.init) {
-      // Try to locate a payment URL inside json.init — support paystack/flutterwave/stripe shapes
-      const init = json.init;
-      // Paystack: init.data.authorization_url or init.data.authorization_url or init.data
-      let redirectUrl = null;
-      if (init.data && typeof init.data === 'object') {
-        redirectUrl = init.data.authorization_url || init.data.authorization_url || init.data.authorization_url || init.data.link || init.data.authorization_url || init.data.data || null;
-        // paystack often uses init.data.authorization_url or init.data.authorization_url
-        redirectUrl = redirectUrl || init.data.authorization_url || init.data.authorization_url || init.data.authorization_url;
-      }
-      // Flutterwave often returns init.data.link or init.data.checkout_url
-      redirectUrl = redirectUrl || init.data && (init.data.link || init.data.checkout_url || init.data.authorization_url);
-      // Stripe: init.url or init.session && session.url
-      redirectUrl = redirectUrl || init.url || (init.session && init.session.url);
-
-      // If redirectUrl unset, try other common fields
-      if (!redirectUrl) {
-        // Some providers embed full response — try to find authorization_url at top-level
-        redirectUrl = init.authorization_url || init.link || init.payment_link || null;
-      }
-
-      if (redirectUrl) {
-        // Redirect user to payment provider
-        window.location.href = redirectUrl;
-        return;
-      } else {
-        // As fallback, server returns adId & paymentId — we redirect user to ads.html to see pending ad
-        showToast('Payment initialized — redirecting to My Ads');
-        window.location.href = '/ads.html?payment=init&ad=' + encodeURIComponent(json.adId || '');
-        return;
-      }
-    } else {
-      showToast((json && json.message) ? json.message : 'Failed to init payment');
-      console.error('reawke init failed', json);
-    }
-  } catch (e) {
-    console.error('reawke error', e);
-    showToast('Network error during payment init');
-  }
-}
-
-/* ---------------------------
-  Fetch / refresh ads from backend
-   --------------------------- */
-async function refreshAds() {
-  await tryFetchBackendAds(6000);
-  renderProducts();
-}
-
-/* ---------------------------
-  Cart functions etc (unchanged)
-   --------------------------- */
-function addToCart(product, qty, showConfirm=false){
-  const cart = readCart();
-  const found = cart.find(i=>i.id===product.id);
-  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
-  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
-  writeCart(cart);
-  if(showConfirm){
-    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
-    document.getElementById('confirmBackdrop').style.display='flex';
-  } else {
-    showToast('Added to cart');
-  }
-}
-
-function renderCart(){
-  const cartList = document.getElementById('cartList');
-  if(!cartList) return;
-  const cart = readCart();
-  cartList.innerHTML = '';
-  let total = 0;
-  cart.forEach(item=>{
-    total += item.qty * item.price;
-    const div = document.createElement('div');
-    div.className = 'cart-item';
-    div.innerHTML = `<img src="${item.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:8px">
-      <div style="flex:1"><div style="font-weight:800">${item.title}</div><div style="color:var(--muted);font-size:13px">Qty: ${item.qty} • ₦${Number(item.price).toLocaleString()}</div></div>
-      <div><button class="btn ghost remove" data-id="${item.id}">Remove</button></div>`;
-    cartList.appendChild(div);
-  });
-  document.getElementById('cartTotal').textContent = '₦' + Number(total).toLocaleString();
-  document.getElementById('cartCount').textContent = cart.reduce((s,i)=>s+i.qty,0);
-  document.getElementById('cartCount').setAttribute('aria-label', `${cart.reduce((s,i)=>s+i.qty,0)} items in cart`);
-
-  // enable/disable proceed button
-  const checkoutBtn = document.getElementById('checkoutNow');
-  checkoutBtn.disabled = cart.length === 0;
-
-  // attach handlers
-  Array.from(document.querySelectorAll('.remove')).forEach(b=>{
-    b.addEventListener('click', (e)=>{
-      const id = e.target.dataset.id;
-      const c = readCart().filter(x=>x.id!==id);
-      writeCart(c);
-      renderCart();
-      showToast('Removed');
-    });
-  });
-}
-
-/* ---------------------------
-  Cart toggle handlers (unchanged)
-   --------------------------- */
-const cartBackdrop = document.getElementById('cartBackdrop');
-const cartModal = cartBackdrop.querySelector('.cart-modal');
-
-function toggleCart(fromDrawer = false){
-  const isOpen = cartBackdrop.style.display === 'flex';
-  if(isOpen){
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  } else {
-    renderCart();
-    cartBackdrop.style.display = 'flex';
-    cartBackdrop.setAttribute('aria-hidden','false');
-    if(fromDrawer) closeDrawer();
-    const checkoutBtn = document.getElementById('checkoutNow');
-    checkoutBtn.focus();
-  }
-}
-
-document.getElementById('openCartTop').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(false);
-});
-
-document.getElementById('linkCart').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(true);
-});
-
-cartBackdrop.addEventListener('click', (e)=>{
-  if(e.target === cartBackdrop) {
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  }
-});
-
-document.getElementById('closeCart').addEventListener('click', ()=> {
-  cartBackdrop.style.display='none';
-  cartBackdrop.setAttribute('aria-hidden','true');
-});
-
-document.getElementById('checkoutNow').addEventListener('click', ()=> {
-  const cart = readCart();
-  if(cart.length === 0){
-    showToast('Cart empty');
-    return;
-  }
-  alert(`Proceeding to payment — total ${document.getElementById('cartTotal').textContent}`);
-});
-
-/* Confirm popup handlers */
-document.getElementById('confirmProceed').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Proceeding to payment (demo). Order remains in cart.');
-});
-document.getElementById('confirmCancel').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Item kept in cart.');
-});
-
-/* Product VIEW modal (unchanged) */
-const viewBackdrop = document.getElementById('viewBackdrop');
-const viewImageEl = document.getElementById('viewImage');
-const viewThumbs = document.getElementById('viewThumbs');
-const viewTitle = document.getElementById('viewName');
-const viewDesc = document.getElementById('viewDesc');
-const viewPrice = document.getElementById('viewPrice');
-const viewLoc = document.getElementById('viewLoc');
-const viewQty = document.getElementById('viewQty');
-let viewCurrentProduct = null;
-let viewCurrentIndex = 0;
-
-function openViewModal(product){
-  viewCurrentProduct = product;
-  viewCurrentIndex = 0;
-  viewTitle.textContent = product.title;
-  viewDesc.textContent = product.desc;
-  viewPrice.textContent = '₦' + Number(product.price).toLocaleString();
-  viewLoc.textContent = product.loc + ' • ' + product.qty + ' pcs';
-  viewQty.value = 1;
-  renderViewGallery(product.images);
-  viewImageEl.src = product.images[0];
-  viewBackdrop.style.display = 'flex';
-  viewBackdrop.setAttribute('aria-hidden','false');
-}
-
-function renderViewGallery(images){
-  viewThumbs.innerHTML = '';
-  images.forEach((src, i)=>{
-    const thumb = document.createElement('div');
-    thumb.className = 'view-thumb' + (i===0 ? ' active' : '');
-    thumb.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="thumb">`;
-    thumb.addEventListener('click', ()=> {
-      viewCurrentIndex = i;
-      viewImageEl.src = images[i];
-      Array.from(viewThumbs.children).forEach(c=>c.classList.remove('active'));
-      thumb.classList.add('active');
-    });
-    viewThumbs.appendChild(thumb);
-  });
-}
-
-document.getElementById('closeView').addEventListener('click', ()=> {
-  viewBackdrop.style.display='none';
-  viewBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('viewAdd').addEventListener('click', ()=>{
-  if(!viewCurrentProduct) return;
-  const q = Math.max(1, Math.min(viewCurrentProduct.qty, parseInt(viewQty.value || '1')));
-  addToCart(viewCurrentProduct, q, false);
-  renderCart();
-  showToast('Added to cart');
-});
-
-/* Drawer open/close + links (unchanged) */
-const drawer = document.getElementById('drawer');
-const backdrop = document.getElementById('drawerBackdrop');
-document.getElementById('profileIcon').addEventListener('click', ()=> openDrawer());
-document.getElementById('hambBtn').addEventListener('click', ()=> openDrawer());
-document.getElementById('drawerClose').addEventListener('click', ()=> closeDrawer());
-backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
-
-function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
-function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
-
-/* quick link behaviors (unchanged) */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'sell.html'; });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); });
-
-document.getElementById('linkKyc').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'kyc.html'; });
-
-document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'ads.html'; });
-document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'sell.html'; });
-
-document.getElementById('linkLogout').addEventListener('click', (e)=>{
-  e.preventDefault();
-  localStorage.removeItem(USER_KEY);
-  setAvatarFromUser();
-  showToast('Logged out (demo)');
-});
-
-/* toast helper */
-function showToast(msg, ms=2200){
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.style.display = 'block';
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(()=> t.style.display='none', ms);
-}
-/* On first load: demo user if none */
-if(!readUser()){
-  writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
-  setAvatarFromUser();
-} else {
-  setAvatarFromUser();
-}
-
-/* close modals/backdrops on outside click */
-document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(b=>{
-  b.addEventListener('click', (e)=>{ if(e.target === b) { b.style.display='none'; b.setAttribute('aria-hidden','true'); } });
-});
-
-/* ESC close */
-document.addEventListener('keydown', (e)=>{
-  if(e.key === 'Escape'){
-    closeDrawer();
-    document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(m=>{ m.style.display='none'; m.setAttribute('aria-hidden','true'); });
-    cartBackdrop.style.display = 'none';
-  }
-});
-
-/* storage changes from other tabs */
-window.addEventListener('storage', (e)=>{
-  if(e.key === CART_KEY) renderCart();
-});
-/* initial rendering */
-(async function init(){
-  renderProducts();
-  renderCart();
-  // if logged in, fetch fresh user details from backend and load bank fields
-  const u = readUser();
-  if (u && u.id) {
-    try {
-      const res = await fetch(BACKEND_BASE + '/api/users/' + encodeURIComponent(u.id), { credentials: 'include' });
-      const json = await res.json().catch(()=>null);
-      if (res.ok && json && json.success && json.user) {
-        // merge and persist
-        const merged = Object.assign({}, u, json.user);
-        writeUser(merged);
-        setAvatarFromUser();
-        // prefill bank fields
-        if (merged.account_details) {
-          document.getElementById('bankAccount').value = merged.account_details.account_number || '';
-          document.getElementById('bankName').value = merged.account_details.name || '';
-          document.getElementById('bankCode').value = merged.account_details.bank_code || '';
-        }
-        statusSwitch.checked = !!merged.online;
-      }
-    } catch (e) { console.warn('fetch user failed', e); }
-  }
-  // Try to refresh ads (my ads for seller) silently
-  await refreshAds();
-})();
-</script>
-</body>
-</html>
+  Bank modal handlers (NEW)
+   - Opens centered modal
+   - Prefills from localStorage user.account_details or server fetch
+   - Attempts to POST /api/users/:id/bank on save (server must provide this endpoint)
+*/
