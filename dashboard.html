@@ -444,3 +444,233 @@
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
   </nav>
+<script>
+/* ============================
+   Storage keys & helpers
+   ============================ */
+const USER_KEY = 'wire_user_v1';
+const CART_KEY = 'wire_cart_v1';
+function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
+function writeUser(u){
+  try { localStorage.setItem(USER_KEY, JSON.stringify(u)); } catch(e){}
+  renderCart();
+  setAvatarFromUser();
+}
+function readCart(){ try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch(e){ return []; } }
+function writeCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); renderCart(); }
+
+/* ---------------------------
+  Avatar & profile display
+   --------------------------- */
+function setAvatarFromUser(){
+  const u = readUser();
+  const nameEl = document.getElementById('profileName');
+  const emailEl = document.getElementById('profileEmail');
+  const avatarBox = document.getElementById('avatarBox');
+  const avatarWrap = document.getElementById('avatarWrap');
+  const mini = document.getElementById('miniAvatar');
+
+  if(u && u.id){
+    nameEl.textContent = u.fullname || u.username || u.email || 'User';
+    emailEl.textContent = u.phone || u.email || 'Member';
+    if(u.avatarUrl){
+      avatarBox.innerHTML = `<img src="${u.avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover">`;
+      mini.innerHTML = `<img src="${u.avatarUrl}" alt="mini" style="width:34px;height:34px;object-fit:cover">`;
+    } else {
+      const initials = (u.fullname || u.username || 'G').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
+      avatarBox.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:linear-gradient(180deg,#fff,#faf7ef); width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+      mini.innerHTML = `<div style="font-weight:900;color:var(--gold1); background:#fff; width:100%;height:100%;display:flex;align-items:center;justify-content:center">${initials}</div>`;
+    }
+  } else {
+    nameEl.textContent = 'Guest';
+    emailEl.textContent = 'Not signed in';
+    avatarBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="42" height="42"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+    mini.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+  }
+
+  const online = (u && u.online) ? true : false;
+  if(online){ avatarWrap.classList.add('online'); } else { avatarWrap.classList.remove('online'); }
+}
+setAvatarFromUser();
+
+/* ---------------------------
+  Helper: fetch fresh user from backend using existing user.id
+*/
+async function refreshUserFromServer() {
+  const u = readUser();
+  if (!u || !u.id) return null;
+  try {
+    const res = await fetch((location.origin || '') + '/api/kyc/status/' + encodeURIComponent(u.id), { credentials: 'include' });
+    if (!res.ok) return null;
+    const j = await res.json().catch(()=>null);
+    if (!j || !j.success) return null;
+    const serverUser = j.user || {};
+    const merged = Object.assign({}, u, serverUser);
+    writeUser(merged);
+    return merged;
+  } catch (e) {
+    console.warn('refreshUserFromServer failed', e);
+    return null;
+  }
+}
+
+/* ---------------------------
+  Bank modal handlers (NEW)
+*/
+const bankBackdrop = document.getElementById('bankBackdrop');
+const bankNameInput = document.getElementById('bankName');
+const bankAccountInput = document.getElementById('bankAccount');
+const bankCodeInput = document.getElementById('bankCode');
+const bankMsg = document.getElementById('bankMsg');
+
+document.getElementById('linkBank').addEventListener('click', (e)=> { e.preventDefault(); openBankModal(); });
+
+function openBankModal(){
+  const u = readUser();
+  if (u && u.account_details) {
+    bankAccountInput.value = u.account_details.account_number || '';
+    bankNameInput.value = u.account_details.name || u.fullname || '';
+    bankCodeInput.value = u.account_details.bank_code || '';
+    bankMsg.textContent = 'Loaded from your saved profile. Edit and press Save to persist.';
+  } else {
+    bankAccountInput.value = '';
+    bankNameInput.value = '';
+    bankCodeInput.value = '';
+    bankMsg.textContent = 'Enter account name, account number and bank code.';
+    const u2 = readUser();
+    if (u2 && u2.id) {
+      refreshUserFromServer().then(updated => {
+        const uu = readUser();
+        if (uu && uu.account_details) {
+          bankAccountInput.value = uu.account_details.account_number || '';
+          bankNameInput.value = uu.account_details.name || uu.fullname || '';
+          bankCodeInput.value = uu.account_details.bank_code || '';
+          bankMsg.textContent = 'Loaded from server (if available).';
+        }
+      }).catch(()=>{});
+    }
+  }
+  bankBackdrop.style.display = 'flex';
+  bankBackdrop.setAttribute('aria-hidden','false');
+  bankNameInput.focus();
+}
+
+document.getElementById('bankCancel').addEventListener('click', ()=> {
+  bankBackdrop.style.display='none';
+  bankBackdrop.setAttribute('aria-hidden','true');
+});
+
+document.getElementById('bankSave').addEventListener('click', async () => {
+  const u = readUser();
+  if (!u || !u.id) { bankMsg.textContent = 'You must be signed in to save bank details.'; return; }
+  const account_number = bankAccountInput.value.trim();
+  const name = bankNameInput.value.trim();
+  const bank_code = bankCodeInput.value.trim();
+  if (!account_number || !name || !bank_code) { bankMsg.textContent = 'All fields are required.'; return; }
+  bankMsg.textContent = 'Saving...';
+
+  try {
+    const res = await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(u.id) + '/bank', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'include',
+      body: JSON.stringify({ account_number, bank_code, name })
+    });
+    const json = await res.json().catch(()=>null);
+    if (res.ok && json && json.success) {
+      bankMsg.textContent = 'Saved successfully.';
+      const merged = Object.assign({}, u, json.user || {});
+      if (!merged.account_details) merged.account_details = {};
+      merged.account_details.account_number = account_number;
+      merged.account_details.bank_code = bank_code;
+      merged.account_details.name = name;
+      writeUser(merged);
+
+      setTimeout(()=> {
+        bankBackdrop.style.display='none';
+        bankBackdrop.setAttribute('aria-hidden','true');
+      }, 700);
+      return;
+    } else {
+      bankMsg.textContent = (json && json.message) ? json.message : 'Failed to save (server error)';
+    }
+  } catch (e) {
+    console.error('save bank error', e);
+    bankMsg.textContent = 'Network error while saving bank details.';
+  }
+});
+
+/* ---------------------------
+  Status switch
+*/
+const statusSwitch = document.getElementById('statusSwitch');
+const storedUser = readUser();
+statusSwitch.checked = (storedUser && storedUser.online) ? true : false;
+statusSwitch.addEventListener('change', async ()=>{
+  let u = readUser() || { username:'guest' };
+  u.online = statusSwitch.checked;
+  writeUser(u);
+  setAvatarFromUser();
+  renderProducts();
+  showToast(u.online ? 'You are online' : 'You are offline');
+
+  try {
+    const uid = u.id;
+    if (!uid) return;
+    const payload = { online: Boolean(u.online) };
+    if (navigator.geolocation && u.online) {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        payload.lat = pos.coords.latitude;
+        payload.lng = pos.coords.longitude;
+        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload)
+        }).catch(e => console.warn('persist online failed', e));
+      }, async () => {
+        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload)
+        }).catch(e => console.warn('persist online failed', e));
+      }, { timeout: 6000 });
+    } else {
+      await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      }).catch(e => console.warn('persist online failed', e));
+    }
+  } catch (e) { console.warn('online toggle error', e); }
+});
+
+/* ---------------------------
+  Subcategories + categories (unchanged)
+*/
+const SUBS = {
+  'All': ['All'],
+  'Foods': ['All','Food','Pastry','Items'],
+  'Clothing': ['All','Men','Women','Children','Shoes','Jewellery'],
+  'Electronics & Gadgets': ['All','Phones','Laptop','MP3','iPad','Watch','Fans','Others']
+};
+const catEls = document.querySelectorAll('.cat');
+const subRoot = document.getElementById('subcats');
+function buildSubcats(active){
+  subRoot.innerHTML = '';
+  const subs = SUBS[active] || ['All'];
+  subs.forEach((s,i)=>{
+    const d = document.createElement('div'); d.className='subcat' + (i===0?' active':''); d.textContent=s; d.dataset.sub=s;
+    d.addEventListener('click', ()=>{ document.querySelectorAll('.subcat').forEach(x=>x.classList.remove('active')); d.classList.add('active'); renderProducts(); });
+    subRoot.appendChild(d);
+  });
+}
+catEls.forEach(c=> c.addEventListener('click', ()=>{
+  catEls.forEach(x=>x.classList.remove('active'));
+  c.classList.add('active');
+  buildSubcats(c.dataset.cat);
+  renderProducts();
+}));
+buildSubcats('All');
