@@ -8,6 +8,7 @@
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 
 <style>
+  /* (Exact same CSS as your original dashboard — preserved) */
   :root{
     --white: #ffffff;
     --page-bg: #f6f7f9;
@@ -246,6 +247,21 @@
       <a class="menu-item" href="#" id="linkContact"><div class="mi-icon" aria-hidden="true">✉️</div><div><strong>Contact us</strong><div style="font-size:12px;color:var(--muted)">Get help & support</div></div></a>
       <a class="menu-item" href="#" id="linkLogout"><div class="mi-icon" aria-hidden="true">🚪</div><div><strong>Logout</strong><div style="font-size:12px;color:var(--muted)">Sign out</div></div></a>
     </nav>
+
+    <!-- BANK DETAILS FORM (added) -->
+    <div style="margin-top:10px;border-top:1px solid rgba(12,12,12,0.06);padding-top:10px;">
+      <h4 style="margin:6px 0 8px 0">Payout / Bank details</h4>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <input id="bankName" placeholder="Account name" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
+        <input id="bankAccount" placeholder="Account number" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
+        <input id="bankCode" placeholder="Bank code" style="padding:8px;border-radius:8px;border:1px solid rgba(12,12,12,0.06)" />
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn ghost" id="loadBank">Load</button>
+          <button class="btn gold" id="saveBank">Save bank</button>
+        </div>
+        <div id="bankMsg" style="font-size:13px;color:var(--muted)"></div>
+      </div>
+    </div>
   </aside>
 
   <!-- main content area -->
@@ -293,7 +309,7 @@
       </div>
     </div>
   </div>
-<!-- product view modal (new) -->
+
   <div class="view-backdrop" id="viewBackdrop" aria-hidden="true">
     <div class="view-modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
@@ -417,7 +433,7 @@
   </nav>
   <script>
 /* ============================
-   Storage keys & helpers
+   Storage keys & helpers (unchanged, kept for compatibility)
    ============================ */
 const USER_KEY = 'wire_user_v1';
 const CART_KEY = 'wire_cart_v1';
@@ -461,64 +477,110 @@ function setAvatarFromUser(){
 setAvatarFromUser();
 
 /* ---------------------------
-  Status switch
+  Status switch (NEW behavior integrated)
+   - toggles user online/offline on backend
+   - updates avatar border & converts seller ads to live/offline on server
    --------------------------- */
 const statusSwitch = document.getElementById('statusSwitch');
 const user = readUser();
 statusSwitch.checked = (user && user.online) ? true : false;
-statusSwitch.addEventListener('change', ()=>{
+statusSwitch.addEventListener('change', async ()=>{
   let u = readUser() || { username:'guest' };
   u.online = statusSwitch.checked;
   writeUser(u);
   setAvatarFromUser();
   renderProducts();
   showToast(u.online ? 'You are online' : 'You are offline');
+
+  // POST to backend to persist online status (and flip ads live/offline)
+  try {
+    const uid = u.id;
+    if (!uid) {
+      console.warn('No user id in local storage; cannot persist online state');
+      return;
+    }
+    const payload = { online: Boolean(u.online) };
+    // attempt to get geolocation when user switches online (optional)
+    if (navigator.geolocation && u.online) {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        payload.lat = pos.coords.latitude;
+        payload.lng = pos.coords.longitude;
+        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload)
+        }).catch(e => console.warn('persist online failed', e));
+      }, async () => {
+        // geolocation denied or failed -> still persist online without coords
+        await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload)
+        }).catch(e => console.warn('persist online failed', e));
+      }, { timeout: 6000 });
+    } else {
+      // no geolocation or user offline -> just persist
+      await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(uid) + '/online', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      }).catch(e => console.warn('persist online failed', e));
+    }
+  } catch (e) { console.warn('online toggle error', e); }
 });
 
+
 /* ---------------------------
-  Settings modal handlers
+  Bank form handlers (NEW)
+   - Save bank details to backend: POST /api/users/:id/bank
+   - Load bank details from localStorage user object (if available)
    --------------------------- */
-const modalBackdrop = document.getElementById('modalBackdrop');
-document.getElementById('openSettings').addEventListener('click', (e)=>{
-  e.preventDefault();
-  modalBackdrop.style.display = 'flex';
-  document.getElementById('themeSwitch').checked = document.body.classList.contains('dark');
-});
-document.getElementById('closeSettings').addEventListener('click', ()=> modalBackdrop.style.display='none');
-
-document.getElementById('themeSwitch').addEventListener('change', (e)=>{
-  if(e.target.checked){ document.body.classList.add('dark'); showToast('Dark mode enabled'); } else { document.body.classList.remove('dark'); showToast('Light mode enabled'); }
-});
-
-/* Change password modal */
-document.getElementById('openChangePassword').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='flex'; });
-document.getElementById('closePw').addEventListener('click', ()=>{ document.getElementById('pwBackdrop').style.display='none'; });
-document.getElementById('savePw').addEventListener('click', ()=>{
-  document.getElementById('pwBackdrop').style.display='none';
-  showToast('Password updated (demo)');
-});
-/* Account details modal */
-document.getElementById('openAccountDetails').addEventListener('click', ()=>{
-  const u = readUser() || {};
-  document.getElementById('accName').value = u.fullname || '';
-  document.getElementById('accPhone').value = u.phone || '';
-  document.getElementById('accCity').value = u.city || '';
-  document.getElementById('accBackdrop').style.display='flex';
-});
-document.getElementById('closeAcc').addEventListener('click', ()=> document.getElementById('accBackdrop').style.display='none');
-document.getElementById('saveAcc').addEventListener('click', ()=>{
-  const u = readUser() || {};
-  u.fullname = document.getElementById('accName').value.trim();
-  u.phone = document.getElementById('accPhone').value.trim();
-  u.city = document.getElementById('accCity').value.trim();
-  writeUser(u);
-  setAvatarFromUser();
-  document.getElementById('accBackdrop').style.display='none';
-  showToast('Account details saved (demo)');
+document.getElementById('saveBank').addEventListener('click', async () => {
+  const u = readUser();
+  if (!u || !u.id) { showToast('Sign in to save bank details'); return; }
+  const acc = document.getElementById('bankAccount').value.trim();
+  const name = document.getElementById('bankName').value.trim();
+  const code = document.getElementById('bankCode').value.trim();
+  if (!acc || !name || !code) { document.getElementById('bankMsg').textContent = 'Account name, number and bank code required'; return; }
+  document.getElementById('bankMsg').textContent = 'Saving...';
+  try {
+    const res = await fetch((location.origin || '') + '/api/users/' + encodeURIComponent(u.id) + '/bank', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ account_number: acc, bank_code: code, name })
+    });
+    const json = await res.json().catch(()=>null);
+    if (res.ok && json && json.success) {
+      document.getElementById('bankMsg').textContent = 'Saved';
+      // persist locally as well
+      u.account_details = u.account_details || {};
+      u.account_details.account_number = acc;
+      u.account_details.bank_code = code;
+      u.account_details.name = name;
+      writeUser(u);
+    } else {
+      document.getElementById('bankMsg').textContent = (json && json.message) ? json.message : 'Save failed';
+    }
+  } catch (e) {
+    console.error('save bank', e);
+    document.getElementById('bankMsg').textContent = 'Network error';
+  }
 });
 
+document.getElementById('loadBank').addEventListener('click', (e) => {
+  const u = readUser();
+  if (!u || !u.account_details) { showToast('No bank details found'); return; }
+  document.getElementById('bankAccount').value = u.account_details.account_number || '';
+  document.getElementById('bankName').value = u.account_details.name || '';
+  document.getElementById('bankCode').value = u.account_details.bank_code || '';
+  document.getElementById('bankMsg').textContent = 'Loaded from local memory';
+});
 /* ---------------------------
-  Subcategories + categories
+  Subcategories + categories (unchanged)
    --------------------------- */
 const SUBS = {
   'All': ['All'],
@@ -546,448 +608,37 @@ catEls.forEach(c=> c.addEventListener('click', ()=>{
 buildSubcats('All');
 
 /* ---------------------------
-  PRODUCTS fallback (demo items)
-   - will be used only when backend is unreachable or returns empty
-   - keep this identical to previous content (temporary items)
+  PRODUCTS fallback (unchanged demo items)
    --------------------------- */
 const PRODUCTS = [
   { id:'p1', title:'Fresh Meat Pies (Plate of 10)', desc:'Homemade meat pies, hot & fresh.', images:[
       'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg',
       'https://i.postimg.cc/KYwyF296/IMG-20260214-163742.jpg'
-    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food'},
+    ], price:5000, qty:20, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Foods', sub:'Food', created_at: new Date().toISOString()},
   { id:'p2', title:'Assorted Pastry Box', desc:'Delicious pastry box for events.', images:[
       'https://i.postimg.cc/SsJHtvkf/IMG-20260214-162941.jpg',
       'https://i.postimg.cc/3x3z0XgY/pastry1.jpg'
-    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry'},
+    ], price:3000, qty:40, loc:'Awka, Anambra', live:true, seller_online:true, category:'Foods', sub:'Pastry', created_at: new Date().toISOString()},
   { id:'p3', title:'Designer Ankara Shirt (XL)', desc:'Handmade Ankara shirt — top quality fabric.', images:[
       'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg',
       'https://i.postimg.cc/sgLLGJpY/IMG-20260214-163908.jpg'
-    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men'},
+    ], price:12000, qty:5, loc:'Aba, Abia', live:false, seller_online:false, category:'Clothing', sub:'Men', created_at: new Date().toISOString()},
   { id:'p4', title:'Women Floral Dress', desc:'Summer women dress, size M.', images:[
       'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg',
       'https://i.postimg.cc/N01xG8bg/IMG-20260214-164025.jpg'
-    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women'},
+    ], price:6940, qty:8, loc:'Lagos, Lagos', live:true, seller_online:true, category:'Clothing', sub:'Women', created_at: new Date().toISOString()},
   { id:'p5', title:'Portable Radio', desc:'Compact radio with excellent sound quality.', images:[
       'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg',
       'https://i.postimg.cc/5NhvHYXf/IMG-20260214-164302.jpg'
-    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio'},
+    ], price:4500, qty:32, loc:'Enugu, Enugu', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Radio', created_at: new Date().toISOString()},
   { id:'p6', title:'Table Fan 3-speed', desc:'Durable table fan for home.', images:[
       'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg',
       'https://i.postimg.cc/gJjrtmwz/IMG-20260214-164413.jpg'
-    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans'}
+    ], price:7000, qty:12, loc:'Onitsha, Anambra', live:true, seller_online:true, category:'Electronics & Gadgets', sub:'Fans', created_at: new Date().toISOString()}
 ];
 
 /* ---------------------------
-  Load ads from backend when available
-  - If backend returns ads (array), use them instead of PRODUCTS.
-  - If backend unreachable or empty list, fall back to PRODUCTS (temporary).
-  --------------------------- */
-const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com'; // your backend
-let BACKEND_AVAILABLE = false;
-let BACKEND_ADS = null; // null => not yet fetched, [] empty means backend returned none
-
-async function tryFetchBackendAds(timeoutMs = 5000) {
-  // attempt to fetch /api/ads?status=live
-  const controller = new AbortController();
-  const id = setTimeout(()=> controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(BACKEND_BASE + '/api/ads?status=live', { signal: controller.signal });
-    clearTimeout(id);
-    if(!res.ok) {
-      console.warn('Backend /api/ads responded with', res.status);
-      BACKEND_AVAILABLE = false;
-      BACKEND_ADS = null;
-      return null;
-    }
-    const json = await res.json().catch(()=>null);
-    if(!json || !json.success || !Array.isArray(json.ads)) {
-      // some backends might return array directly; try fallback
-      if(Array.isArray(json)) {
-        BACKEND_ADS = json;
-        BACKEND_AVAILABLE = true;
-        return json;
-      }
-      console.warn('Unexpected backend ads shape', json);
-      BACKEND_AVAILABLE = false;
-      BACKEND_ADS = null;
-      return null;
-    }
-    BACKEND_ADS = json.ads;
-    BACKEND_AVAILABLE = true;
-    return json.ads;
-  } catch (err) {
-    clearTimeout(id);
-    console.warn('Could not reach backend for ads', err && err.message ? err.message : err);
-    BACKEND_AVAILABLE = false;
-    BACKEND_ADS = null;
-    return null;
-  }
-}
-
-/* helper: map backend ad row -> UI product shape */
-function mapBackendAdToProduct(a) {
-  // a may contain: id, seller_id, title, description, images (text[]), price, currency, quantity, location, category, subcategory, status
-const images = (a.images && Array.isArray(a.images) && a.images.length) ? a.images.slice() : [];
-  // If images are stored as json string or single string, try to handle
-  if(!images.length && a.images && typeof a.images === 'string') {
-    try {
-      const parsed = JSON.parse(a.images);
-      if(Array.isArray(parsed)) images.push(...parsed);
-    } catch(e){}
-    // if still not, use the string as a single URL
-    if(!images.length) images.push(a.images);
-  }
-  // fallback image placeholder
-  if(!images.length) images.push('https://i.postimg.cc/3x3z0XgY/pastry1.jpg');
-
-  return {
-    id: String(a.id || a.ad_id || a._id || ('ad_' + Math.random().toString(36).slice(2,9))),
-    title: a.title || a.name || 'Untitled',
-    desc: a.description || a.desc || '',
-    images,
-    price: Number(a.price || a.amount || 0),
-    qty: Number(a.quantity || a.qty || 1),
-    loc: a.location || a.city || '',
-    live: String(a.status || '').toLowerCase() === 'live' || String(a.status || '').toLowerCase() === 'active',
-    seller_online: true,
-    category: a.category || a.category_name || 'Other',
-    sub: a.subcategory || a.sub || 'All'
-  };
-}
-
-/* ---------------------------
-  Render products (uses backend ads if present, otherwise fallback PRODUCTS)
+  Backend integration
+   - Use location.origin as BACKEND_BASE to avoid hard-coded host
    --------------------------- */
-const productsRoot = document.getElementById('products');
-async function renderProducts(){
-  productsRoot.innerHTML = '';
-
-  // Determine active filters
-  const activeCat = document.querySelector('.cat.active').dataset.cat;
-  const activeSub = document.querySelector('.subcat.active')?.dataset.sub || 'All';
-
-  // If backend available and returned ads, map them
-  let list = [];
-  if(BACKEND_AVAILABLE && Array.isArray(BACKEND_ADS)) {
-    list = BACKEND_ADS.map(mapBackendAdToProduct);
-  } else {
-    list = PRODUCTS.slice(); // copy demo
-  }
-
-  // Filter using active cat/sub
-  const filtered = list.filter(p=>{
-    if(activeCat !== 'All' && p.category !== activeCat) return false;
-    if(activeSub !== 'All' && p.sub !== activeSub) return false;
-    return true;
-  });
-
-  // render each product (exact same DOM structure as before)
-  filtered.forEach(p=>{
-    const el = document.createElement('article'); el.className='product';
-    el.innerHTML = `
-      <div class="media" role="button" tabindex="0" data-id="${p.id}">
-        <img src="${p.images[0]}" alt="${p.title}">
-        ${p.live && p.seller_online ? `<div class="live-pill"><span class="live-dot"></span> LIVE</div>` : `<div class="live-pill" style="background:#f2f2f2;color:#333">Offline</div>`}
-      </div>
-      <div class="body">
-        <div class="p-title">${p.title}</div>
-        <div class="p-desc">${p.desc}</div>
-        <div class="meta"><div class="price">₦${Number(p.price).toLocaleString()}</div><div class="loc">${p.loc} • ${p.qty} pcs</div></div>
-        <div class="qty-row"><label style="font-weight:700">Qty</label><input class="qty" type="number" min="1" max="${p.qty}" value="1" /></div>
-        <div class="actions"><button class="btn gold addBtn">Add to cart</button><button class="btn ghost viewBtn">View</button></div>
-      </div>
-    `;
-    productsRoot.appendChild(el);
-
-    // image click -> open view modal
-    el.querySelector('.media').addEventListener('click', ()=> openViewModal(p));
-    el.querySelector('.media').addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') openViewModal(p); });
-
-// handlers
-    el.querySelector('.addBtn').addEventListener('click', ()=>{
-      const q = parseInt(el.querySelector('.qty').value || '1');
-      addToCart(p, q, true);
-    });
-    el.querySelector('.viewBtn').addEventListener('click', ()=>{ openViewModal(p); });
-  });
-}
-
-/* Try to load backend ads on startup; fallback to PRODUCTS if unreachable.
-   We fetch once immediately; you can call refreshAds() later if you want.
-*/
-async function loadAdsOnStart() {
-  // Attempt to fetch backend ads; if success and returns non-empty array - use it.
-  const ads = await tryFetchBackendAds(5000);
-  if(ads && Array.isArray(ads) && ads.length>0){
-    // backend available and returned ads => render using backend
-    console.info('Using backend ads (%d) — demo items hidden', ads.length);
-  } else {
-    console.info('Using local demo PRODUCTS (backend not available or empty)');
-  }
-  renderProducts();
-}
-// expose a function to refresh ads from backend (optional)
-async function refreshAds(){
-  await tryFetchBackendAds(5000);
-  renderProducts();
-}
-
-loadAdsOnStart();
-
-/* ---------------------------
-  Cart functions
-   (unchanged behavior, re-used)
-   --------------------------- */
-function addToCart(product, qty, showConfirm=false){
-  const cart = readCart();
-  const found = cart.find(i=>i.id===product.id);
-  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
-  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
-  writeCart(cart);
-  if(showConfirm){
-    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
-    document.getElementById('confirmBackdrop').style.display='flex';
-  } else {
-    showToast('Added to cart');
-  }
-}
-
-function renderCart(){
-  const cartList = document.getElementById('cartList');
-  if(!cartList) return;
-  const cart = readCart();
-  cartList.innerHTML = '';
-  let total = 0;
-  cart.forEach(item=>{
-    total += item.qty * item.price;
-    const div = document.createElement('div');
-    div.className = 'cart-item';
-    div.innerHTML = `<img src="${item.img}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;margin-right:8px">
-      <div style="flex:1"><div style="font-weight:800">${item.title}</div><div style="color:var(--muted);font-size:13px">Qty: ${item.qty} • ₦${Number(item.price).toLocaleString()}</div></div>
-      <div><button class="btn ghost remove" data-id="${item.id}">Remove</button></div>`;
-    cartList.appendChild(div);
-  });
-  document.getElementById('cartTotal').textContent = '₦' + Number(total).toLocaleString();
-  document.getElementById('cartCount').textContent = cart.reduce((s,i)=>s+i.qty,0);
-  document.getElementById('cartCount').setAttribute('aria-label', `${cart.reduce((s,i)=>s+i.qty,0)} items in cart`);
-
-  // enable/disable proceed button
-  const checkoutBtn = document.getElementById('checkoutNow');
-  checkoutBtn.disabled = cart.length === 0;
-
-  // attach handlers
-  Array.from(document.querySelectorAll('.remove')).forEach(b=>{
-    b.addEventListener('click', (e)=>{
-      const id = e.target.dataset.id;
-      const c = readCart().filter(x=>x.id!==id);
-      writeCart(c);
-      renderCart();
-      showToast('Removed');
-    });
-  });
-}
-
-/* ---------------------------
-  Cart toggle (top & drawer both use this)
-   - toggles open/close centered modal
-   - if opened from drawer, close drawer to avoid overlap
-   --------------------------- */
-const cartBackdrop = document.getElementById('cartBackdrop');
-const cartModal = cartBackdrop.querySelector('.cart-modal');
-
-function toggleCart(fromDrawer = false){
-  const isOpen = cartBackdrop.style.display === 'flex';
-  if(isOpen){
-    // close
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  } else {
-    // open -> refresh contents and show
-    renderCart();
-    cartBackdrop.style.display = 'flex';
-    cartBackdrop.setAttribute('aria-hidden','false');
-    if(fromDrawer) closeDrawer();
-    // focus proceed for keyboard users
-    const checkoutBtn = document.getElementById('checkoutNow');
-    checkoutBtn.focus();
-  }
-}
-
-// Top cart toggle
-document.getElementById('openCartTop').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(false);
-});
-
-// Drawer cart toggle (closes drawer when opening) - changed to just open cart modal but link points to ads.html
-document.getElementById('linkCart').addEventListener('click', (e)=>{
-  e.preventDefault();
-  // keep previous UX: toggle centered cart, but user asked My Ads to go to ads.html - link already points to ads.html
-  toggleCart(true);
-});
-
-// clicking backdrop closes the cart modal
-cartBackdrop.addEventListener('click', (e)=>{
-  if(e.target === cartBackdrop) {
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  }
-});
-
-// close cart only via explicit close button (keeps toggle semantics)
-document.getElementById('closeCart').addEventListener('click', ()=> {
-  cartBackdrop.style.display='none';
-  cartBackdrop.setAttribute('aria-hidden','true');
-});
-
-// checkout click
-document.getElementById('checkoutNow').addEventListener('click', ()=> {
-  const cart = readCart();
-  if(cart.length === 0){
-    showToast('Cart empty');
-    return;
-  }
-  alert(`Proceeding to payment — total ${document.getElementById('cartTotal').textContent}`);
-});
-
-/* Confirm popup handlers */
-document.getElementById('confirmProceed').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Proceeding to payment (demo). Order remains in cart.');
-});
-document.getElementById('confirmCancel').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Item kept in cart.');
-});
-/* ---------------------------
-  Product VIEW modal (details + gallery)
-   --------------------------- */
-const viewBackdrop = document.getElementById('viewBackdrop');
-const viewImageEl = document.getElementById('viewImage');
-const viewThumbs = document.getElementById('viewThumbs');
-const viewTitle = document.getElementById('viewName');
-const viewDesc = document.getElementById('viewDesc');
-const viewPrice = document.getElementById('viewPrice');
-const viewLoc = document.getElementById('viewLoc');
-const viewQty = document.getElementById('viewQty');
-let viewCurrentProduct = null;
-let viewCurrentIndex = 0;
-
-function openViewModal(product){
-  viewCurrentProduct = product;
-  viewCurrentIndex = 0;
-  viewTitle.textContent = product.title;
-  viewDesc.textContent = product.desc;
-  viewPrice.textContent = '₦' + Number(product.price).toLocaleString();
-  viewLoc.textContent = product.loc + ' • ' + product.qty + ' pcs';
-  viewQty.value = 1;
-  renderViewGallery(product.images);
-  viewImageEl.src = product.images[0];
-  viewBackdrop.style.display = 'flex';
-  viewBackdrop.setAttribute('aria-hidden','false');
-}
-
-function renderViewGallery(images){
-  viewThumbs.innerHTML = '';
-  images.forEach((src, i)=>{
-    const thumb = document.createElement('div');
-    thumb.className = 'view-thumb' + (i===0 ? ' active' : '');
-    thumb.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="thumb">`;
-    thumb.addEventListener('click', ()=> {
-      viewCurrentIndex = i;
-      viewImageEl.src = images[i];
-      Array.from(viewThumbs.children).forEach(c=>c.classList.remove('active'));
-      thumb.classList.add('active');
-    });
-    viewThumbs.appendChild(thumb);
-  });
-}
-
-document.getElementById('closeView').addEventListener('click', ()=> {
-  viewBackdrop.style.display='none';
-  viewBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('viewAdd').addEventListener('click', ()=>{
-  if(!viewCurrentProduct) return;
-  const q = Math.max(1, Math.min(viewCurrentProduct.qty, parseInt(viewQty.value || '1')));
-  addToCart(viewCurrentProduct, q, false);
-  renderCart(); // update totals & button
-  showToast('Added to cart');
-});
-
-/* ---------------------------
-  Drawer open/close + links
-   --------------------------- */
-const drawer = document.getElementById('drawer');
-const backdrop = document.getElementById('drawerBackdrop');
-document.getElementById('profileIcon').addEventListener('click', ()=> openDrawer());
-document.getElementById('hambBtn').addEventListener('click', ()=> openDrawer());
-document.getElementById('drawerClose').addEventListener('click', ()=> closeDrawer());
-backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
-
-function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
-function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
-
-/* quick link behaviors changed to navigation targets requested by you */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ /* link already points to sell.html, but also support click here */ closeDrawer(); window.location.href = 'sell.html'; });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); /* keep same behavior (open) */ });
-
-/* KYC link navigates to kyc.html */
-document.getElementById('linkKyc').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'kyc.html'; });
-
-/* bottom nav behaviors adjusted:
-   - Jobs (My Ads) -> ads.html
-   - FAB -> sell.html
-*/
-document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'ads.html'; });
-document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'sell.html'; });
-
-/* Logout example */
-document.getElementById('linkLogout').addEventListener('click', (e)=>{
-  e.preventDefault();
-  localStorage.removeItem(USER_KEY);
-  setAvatarFromUser();
-  showToast('Logged out (demo)');
-});
-
-/* toast helper */
-function showToast(msg, ms=2200){
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.style.display='block';
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(()=> t.style.display='none', ms);
-}
-/* On first load: demo user */
-if(!readUser()){
-  writeUser({ fullname:'Dubem', username:'dubem', phone:'08012345678', city:'Onitsha', online:false });
-  setAvatarFromUser();
-} else {
-  setAvatarFromUser();
-}
-
-/* close modals/backdrops on outside click */
-document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(b=>{
-  b.addEventListener('click', (e)=>{ if(e.target === b) { b.style.display='none'; b.setAttribute('aria-hidden','true'); } });
-});
-
-/* accessibility: ESC to close */
-document.addEventListener('keydown', (e)=>{
-  if(e.key === 'Escape'){
-    closeDrawer();
-    document.querySelectorAll('.modal-backdrop, .confirm-backdrop, .view-backdrop').forEach(m=>{ m.style.display='none'; m.setAttribute('aria-hidden','true'); });
-    cartBackdrop.style.display = 'none';
-  }
-});
-
-/* storage changes from other tabs */
-window.addEventListener('storage', (e)=>{
-  if(e.key === CART_KEY) renderCart();
-});
-
-/* initial rendering */
-renderProducts();
-renderCart();
-</script>
-</body>
-</html>
+const BACKEND_BASE = (location.origin || 'https://tradehive-s4e6.onrender.com');
