@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>TradeHive — My Ads</title>
+<link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
+<style>
+  :root{
+    --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
+    --border:rgba(7,16,20,0.06); --gold1:#FFB703; --gold2:#F59E0B;
+    --green:#16a34a; --red:#ef4444; --amber:#d97706; --gray:#6b7280;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:Inter, Roboto, Arial, sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+  header.banner{box-shadow:0 6px 30px rgba(0,0,0,0.12);position:relative;z-index:999}
+  .banner-inner{max-height:110px;overflow:hidden}
+  .banner img{width:100%;height:60%;object-fit:cover;max-height:110px;width:100vw;display:block}
+  .wrap{max-width:1100px;margin:18px auto;padding:16px}
+  main.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:18px;box-shadow:0 10px 40px rgba(2,6,23,0.06);border:1px solid var(--border);margin-top:-40px}
+  .title{font-size:20px;font-weight:900;margin:0}
+  .desc{color:var(--muted);font-size:13px;margin-top:6px}
+  .controls{display:flex;gap:8px;align-items:center;margin:12px 0}
+  .search{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border)}
+  .btn{padding:8px 12px;border-radius:10px;border:0;cursor:pointer;font-weight:800}
+  .btn.primary{background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014}
+  .btn.ghost{background:#fff;border:1px solid var(--border);color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:12px}
+  .ad-card{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--border);display:flex;gap:12px;align-items:flex-start}
+  .ad-media{width:160px;height:120px;border-radius:8px;overflow:hidden;background:#f2f2f2;flex:0 0 160px}
+  .ad-media img{width:100%;height:100%;object-fit:cover}
+  .ad-body{flex:1;display:flex;flex-direction:column;gap:8px}
+  .ad-title{font-weight:900}
+  .ad-desc{color:var(--muted);font-size:13px}
+  .ad-meta{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap}
+  .badge{padding:6px 10px;border-radius:999px;font-weight:800;background:#f8fafc;border:1px solid var(--border);font-size:12px}
+  .status-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;font-weight:800;font-size:13px}
+  .status-pending{background:#f3f4f6;color:var(--gray);border:1px solid var(--border);animation:blink-gray 1.4s linear infinite}
+  .status-live{background:#ecfdf5;color:var(--green);border:1px solid rgba(16,185,129,0.12);animation:blink 1.6s linear infinite}
+  .status-paused{background:#fff7ed;color:var(--amber);border:1px solid rgba(217,119,6,0.12);animation:blink-amber 1.6s linear infinite}
+  .status-expired{background:#fff1f2;color:var(--red);border:1px solid rgba(239,68,68,0.08)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .meta-small{font-size:13px;color:var(--muted)}
+  .muted{color:var(--muted)}
+  .center{display:flex;align-items:center;justify-content:center}
+  .empty{padding:30px;text-align:center;color:var(--muted)}
+  .tiny{font-size:12px;color:var(--muted)}
+  .pill{padding:6px 8px;border-radius:999px;background:#f3f4f6;font-weight:700;color:var(--muted);font-size:12px}
+
+  @keyframes blink { 0%{opacity:1}50%{opacity:0.55}100%{opacity:1} }
+  @keyframes blink-gray { 0%{opacity:1}50%{opacity:0.6}100%{opacity:1} }
+  @keyframes blink-amber { 0%{opacity:1}50%{opacity:0.65}100%{opacity:1} }
+
+  @media (max-width:920px){
+    .ad-media{width:120px;height:90px}
+  }
+</style>
+</head>
+<body>
+  <header class="banner" role="banner" aria-label="TradeHive banner">
+    <div class="banner-inner">
+      <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive banner">
+    </div>
+  </header>
+
+  <div class="wrap">
+    <main class="card" aria-labelledby="myAdsTitle">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <h1 id="myAdsTitle" class="title">My Ads</h1>
+          <div class="desc">Track your ads, re-awake expired ones and toggle online/offline.</div>
+        </div>
+        <div style="text-align:right">
+          <div class="tiny">Ad fee: <strong>₦<span id="adFeeDisplay">1000</span></strong> · Duration: <strong>7 days</strong></div>
+          <div style="height:6px"></div>
+          <button id="createAdBtn" class="btn primary" title="Post new ad">Post new ad</button>
+        </div>
+      </div>
+
+      <div class="controls" style="margin-top:12px">
+        <input id="q" class="search" placeholder="Search title, location, id..." />
+        <button id="filterBtn" class="btn ghost">Filter</button>
+        <select id="statusFilter" class="pill" style="margin-left:8px">
+          <option value="all">All</option>
+          <option value="pending">Pending</option>
+          <option value="live">Live</option>
+          <option value="expired">Expired</option>
+          <option value="paused">Offline</option>
+          <option value="removed">Removed</option>
+        </select>
+        <button id="refreshBtn" class="btn ghost">Refresh</button>
+      </div>
+
+      <div id="listWrap" style="margin-top:12px">
+        <div id="emptyState" class="empty" style="display:none">You have no ads yet.</div>
+        <div id="grid" class="grid"></div>
+      </div>
+    </main>
+  </div>
+
+<script>
+/*
+  ads.html — seller-facing ad management.
+  - Loads current user from localStorage 'th_user' or 'wc_user' (as used elsewhere).
+  - Fetches ads for statuses and filters to current user's ads.
+  - Allows toggle online/offline (PATCH status).
+  - Allows delete (PATCH status='removed') with fallback.
+  - Allows re-awake (POST /pay/ad) -> opens payment link in new tab.
+  - Assumes backend supports: GET /api/ads?status=..., PATCH /api/ads/:id, POST /pay/ad
+*/
+
+const API_BASE = location.origin;
+const AD_FEE = Number((function(){ try { return (localStorage.getItem('AD_FEE') || process.env?.AD_FEE_NGN || '1000'); } catch(e){ return '1000'; } })()) || 1000;
+document.getElementById('adFeeDisplay').innerText = AD_FEE;
+
+const meRaw = localStorage.getItem('th_user') || localStorage.getItem('wc_user') || null;
+if(!meRaw){
+  alert('Please login to TradeHive to manage your ads.');
+  try { window.location.href = 'login.html'; } catch(e) {}
+}
+const me = meRaw ? JSON.parse(meRaw) : null;
+
+const grid = document.getElementById('grid');
+const emptyState = document.getElementById('emptyState');
+const qEl = document.getElementById('q');
+const refreshBtn = document.getElementById('refreshBtn');
+const statusFilter = document.getElementById('statusFilter');
+const createAdBtn = document.getElementById('createAdBtn');
+
+createAdBtn.addEventListener('click', ()=> {
+  window.location.href = 'post-ad.html' /* or your post page */;
+});
+
+refreshBtn.addEventListener('click', loadAds);
+qEl.addEventListener('keyup', (e)=> { if(e.key === 'Enter') loadAds(); });
+statusFilter.addEventListener('change', ()=> renderAds(currentAds));
+
+let currentAds = [];
+
+// statuses we request from server; aggregate them
+const STATUS_REQUESTS = ['pending','pending_payment','live','paused','removed','draft'];
+
+// fetch all statuses, combine, filter by seller, dedupe
+async function loadAds(){
+  grid.innerHTML = '<div class="center muted">Loading…</div>';
+  try {
+    const requests = STATUS_REQUESTS.map(s => fetch(API_BASE + '/api/ads?status=' + encodeURIComponent(s), { credentials: 'include' }).then(r => r.json().catch(()=>null)).catch(()=>null));
+    const results = await Promise.all(requests);
+    let ads = [];
+    for(const r of results){
+      if(!r) continue;
+      // some endpoints return { success:true, ads: [...] } or { ads: [...] } or array
+      let list = [];
+      if(Array.isArray(r)) list = r;
+      else if(Array.isArray(r.ads)) list = r.ads;
+      else if(Array.isArray(r.rows)) list = r.rows;
+      // normalize items
+      for(const a of list){
+        // ensure created_at exists
+        ads.push(a);
+      }
+    }
+    // dedupe by id
+    const byId = {};
+    for(const a of ads){
+      if(!a || !a.id) continue;
+      byId[a.id] = a;
+    }
+    // convert to array, filter by seller
+    let all = Object.values(byId).filter(a => String(a.seller_id) === String(me?.id || me?.userId || me?.user_id || me?.id));
+    // ensure created_at parsed
+    all = all.map(a => {
+      return Object.assign({}, a, { created_at: a.created_at || a.createdAt || a.created || null });
+    });
+    currentAds = all.sort((x,y)=> new Date(y.created_at || 0) - new Date(x.created_at || 0));
+    renderAds(currentAds);
+  } catch (err) {
+    console.error('loadAds error', err);
+    grid.innerHTML = '<div class="center muted">Failed to load ads. Check console.</div>';
+  }
+}
+
+function renderAds(list){
+  const q = (qEl.value || '').trim().toLowerCase();
+  const statusF = statusFilter.value;
+  const filtered = list.filter(a => {
+    if(!a) return false;
+    if(q){
+      const t = ((a.title||'') + ' ' + (a.description||'') + ' ' + (a.location||'') + ' ' + (a.category||'') + ' ' + (a.id||'')).toLowerCase();
+      if(!t.includes(q)) return false;
+    }
+    // compute display status and expiry
+    const st = getDisplayStatus(a);
+    if(statusF === 'all') return true;
+    return st.key === statusF;
+  });
+
+  grid.innerHTML = '';
+  if(!filtered.length) {
+    emptyState.style.display = 'block';
+    return;
+  } else {
+    emptyState.style.display = 'none';
+  }
+
+  for(const ad of filtered){
+    const expiresAt = computeExpiry(ad);
+    const now = Date.now();
+    const display = getDisplayStatus(ad);
+    const firstImg = Array.isArray(ad.images) && ad.images.length ? ad.images[0] : (ad.image || '');
+    const thumb = firstImg || 'https://via.placeholder.com/360x240?text=No+image';
+
+    const el = document.createElement('div');
+    el.className = 'ad-card';
+
+    el.innerHTML = `
+      <div class="ad-media"><img src="${escapeHtml(thumb)}" alt=""></div>
+      <div class="ad-body">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="flex:1">
+            <div class="ad-title">${escapeHtml(ad.title || 'Untitled')}</div>
+            <div class="ad-desc">${escapeHtml(String(ad.description || '').slice(0,160))}</div>
+            <div class="ad-meta" style="margin-top:6px">
+              <div class="badge">₦${Number(ad.price||0).toLocaleString()}</div>
+              <div class="tiny">Qty: ${ad.quantity || ad.qty || 1}</div>
+              <div class="tiny">${escapeHtml(ad.location || '')}</div>
+              <div class="tiny">id: ${escapeHtml(ad.id)}</div>
+            </div>
+          </div>
+          <div style="margin-left:12px;text-align:right">
+            <div class="status-pill ${display.class}">${display.label}</div>
+            <div style="height:8px"></div>
+            <div class="tiny">${expiresAt ? 'Expires: ' + new Date(expiresAt).toLocaleString() : ''}</div>
+          </div>
+        </div>
+
+        <div style="height:8px"></div>
+        <div class="actions">
+          <button class="btn ghost" data-action="view" data-id="${ad.id}">View</button>
+          ${renderPrimaryAction(ad)}
+          <button class="btn ghost" data-action="delete" data-id="${ad.id}">Delete</button>
+        </div>
+      </div>
+    `;
+
+    // attach handlers
+    el.querySelector('[data-action="view"]').addEventListener('click', ()=> {
+      // go to ad public page if exists
+      window.location.href = 'ad.html?id=' + encodeURIComponent(ad.id);
+    });
+
+    const primaryBtn = el.querySelector('[data-action="primary"]');
+    if(primaryBtn){
+      primaryBtn.addEventListener('click', async ()=>{
+        await handlePrimaryAction(ad);
+      });
+    }
+
+    el.querySelector('[data-action="delete"]').addEventListener('click', async ()=>{
+      if(!confirm('Delete this ad? This will remove it from public listings.')) return;
+      await setAdStatus(ad.id, 'removed');
+    });
+
+    grid.appendChild(el);
+  }
+}
+
+// compute expiry timestamp (7 days after created_at). return null if created_at missing
+function computeExpiry(ad){
+  const created = ad.created_at ? new Date(ad.created_at) : (ad.createdAt ? new Date(ad.createdAt) : null);
+  if(!created || isNaN(created.getTime())) return null;
+  const exp = created.getTime() + 7 * 24 * 60 * 60 * 1000; // 7 days
+  return exp;
+}
+
+// display status (key, label, class)
+function getDisplayStatus(ad){
+  const now = Date.now();
+  const base = (ad.status || '').toLowerCase();
+  const exp = computeExpiry(ad);
+  // priority: removed -> paused -> pending_payment/pending -> live/expired
+  if(base === 'removed' || base === 'deleted') return { key:'removed', label:'Removed', class:'status-expired' };
+  if(base === 'paused' || base === 'offline') return { key:'paused', label:'Offline', class:'status-paused' };
+  if(base === 'pending_payment' || base === 'pending' || base === 'draft') return { key:'pending', label:'Pending', class:'status-pending' };
+  if(base === 'live'){
+    if(exp && now >= exp) return { key:'expired', label:'Expired', class:'status-expired' };
+    return { key:'live', label:'Live', class:'status-live' };
+  }
+  // default fallback
+  if(exp && now >= exp) return { key:'expired', label:'Expired', class:'status-expired' };
+  return { key: base || 'pending', label: (base || 'pending').replace('_',' ').toUpperCase(), class:'status-pending' };
+}
+
+function renderPrimaryAction(ad){
+  const display = getDisplayStatus(ad);
+  if(display.key === 'pending'){
+    // no primary action (maybe show pay if still pending_payment)
+    // If status pending_payment show Re-awake (pay)
+    if(String(ad.status).toLowerCase() === 'pending_payment'){
+      return `<button class="btn primary" data-action="primary" data-id="${ad.id}">Pay ₦${AD_FEE}</button>`;
+    }
+    return `<button class="btn ghost" data-action="primary" data-id="${ad.id}" disabled>Pending</button>`;
+  }
+  if(display.key === 'live'){
+    return `<button class="btn ghost" data-action="primary" data-id="${ad.id}">Go offline</button>`;
+  }
+  if(display.key === 'paused'){
+    return `<button class="btn primary" data-action="primary" data-id="${ad.id}">Go online</button>`;
+  }
+  if(display.key === 'expired'){
+    return `<button class="btn primary" data-action="primary" data-id="${ad.id}">Re-awake — ₦${AD_FEE}</button>`;
+  }
+  if(display.key === 'removed'){
+    return `<button class="btn ghost" data-action="primary" data-id="${ad.id}" disabled>Removed</button>`;
+  }
+  return `<button class="btn ghost" data-action="primary" data-id="${ad.id}">Action</button>`;
+}
+
+async function handlePrimaryAction(ad){
+  const display = getDisplayStatus(ad);
+  const id = ad.id;
+  if(display.key === 'live'){
+    // go offline -> set status = 'paused'
+    if(!confirm('Take this ad offline? Buyers will not see it while offline.')) return;
+    await setAdStatus(id, 'paused');
+    return;
+  }
+  if(display.key === 'paused'){
+    // go live -> set status = 'live' (if not expired)
+    // if expired, we require reawake payment instead
+    const exp = computeExpiry(ad);
+    if(exp && Date.now() >= exp){
+      // expired => re-awake
+      if(!confirm('This ad is expired. Re-awake requires a new ₦' + AD_FEE + ' payment. Proceed to payment page?')) return;
+      await reawakeAd(id);
+      return;
+    } else {
+      await setAdStatus(id, 'live');
+      return;
+    }
+  }
+  if(display.key === 'expired'){
+    // re-awake -> payment
+    if(!confirm('Re-awake this ad for another week for ₦' + AD_FEE + '?')) return;
+    await reawakeAd(id);
+    return;
+  }
+  if(display.key === 'pending'){
+    // if ad.status === pending_payment, allow pay
+    if(String(ad.status).toLowerCase() === 'pending_payment'){
+      if(!confirm('Pay ad fee ₦' + AD_FEE + ' to post this ad?')) return;
+      await reawakeAd(id);
+    } else {
+      alert('This ad is pending admin verification. No action available.');
+    }
+    return;
+  }
+}
+
+// helper: call POST /pay/ad to get payment link
+async function reawakeAd(adId){
+  try {
+    const payload = { ad_id: adId, user_id: me.id, email: me.email || me.username || '' };
+    const resp = await fetch(API_BASE + '/pay/ad', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload)
+    });
+    const json = await resp.json().catch(()=>null);
+    if(!resp.ok || !json){
+      // some implementations return text; try parse fallback
+      const text = await resp.text().catch(()=>null);
+      console.error('/pay/ad error', resp.status, json || text);
+      alert('Failed to initialize payment. See console.');
+      return;
+    }
+    // expect payment_link or init
+    const link = json.payment_link || (json.init && json.init.data && json.init.data.authorization_url) || (json.init && json.init.data && json.init.data.link) || (json.init && json.init.url) || null;
+    if(!link){
+      alert('Payment link not returned by server. See console.');
+      console.log('pay/ad response', json);
+      return;
+    }
+    // open payment in new tab and navigate current tab to ads.html (seller tracking)
+    window.open(link, '_blank');
+    // after opening payment in new tab, refresh list after short delay
+    setTimeout(()=> loadAds(), 1200);
+    // optional: navigate seller to ads page root (already here)
+    return;
+  } catch (err) {
+    console.error('reawakeAd error', err);
+    alert('Network error initializing payment.');
+  }
+}
+
+// helper: set ad status (PATCH)
+async function setAdStatus(adId, newStatus){
+  try {
+    // PATCH /api/ads/:id with { status: newStatus }
+    const resp = await fetch(API_BASE + '/api/ads/' + encodeURIComponent(adId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ status: newStatus })
+    });
+    if(resp.ok){
+      loadAds();
+      return true;
+    }
+    // try fallback endpoints
+    if(newStatus === 'removed') {
+      // try POST /api/ads/:id/decline or /api/admin/ads/:id/decline
+      const f1 = await fetch(API_BASE + '/api/ads/' + encodeURIComponent(adId) + '/decline', { method: 'POST', credentials: 'include' });
+      if(f1.ok) { loadAds(); return true; }
+      const f2 = await fetch(API_BASE + '/api/admin/ads/' + encodeURIComponent(adId) + '/decline', { method: 'POST', credentials: 'include' });
+      if(f2.ok) { loadAds(); return true; }
+    } else if(newStatus === 'live'){
+      // try approve endpoints
+      const f1 = await fetch(API_BASE + '/api/ads/' + encodeURIComponent(adId) + '/approve', { method: 'POST', credentials: 'include' });
+      if(f1.ok) { loadAds(); return true; }
+      const f2 = await fetch(API_BASE + '/api/admin/ads/' + encodeURIComponent(adId) + '/approve', { method: 'POST', credentials: 'include' });
+      if(f2.ok) { loadAds(); return true; }
+    }
+    const text = await resp.text().catch(()=>null);
+    console.error('setAdStatus failed', resp.status, text);
+    alert('Failed to update ad status. See console.');
+    return false;
+  } catch (err) {
+    console.error('setAdStatus error', err);
+    alert('Network error while updating ad.');
+    return false;
+  }
+}
+
+function escapeHtml(s){ if (s === null || s === undefined) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// initial load
+loadAds();
+
+</script>
+</body>
+</html>
