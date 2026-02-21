@@ -778,6 +778,7 @@ app.get('/', (req,res)=> res.send('TradeHive backend running'));
 // Ads creation route (idempotent) - UPDATED: store temp_images in payment.meta and DO NOT store images in `ads` yet
 // Accepts JSON with temp_images (array of temp filenames or public IDs) or images array (if you already have public URLs)
 /////////////////////////////////////////////////////////////////////
+// ---------- 2) Updated app.post('/api/ads') route (store temp images in DB but DO NOT send them to provider) ----------
 app.post('/api/ads', async (req, res) => {
   try {
     const {
@@ -788,13 +789,18 @@ app.post('/api/ads', async (req, res) => {
 
     const client = await pool.connect();
     try {
+      // idempotency: if idempotency_key exists, look for existing payments with that key
       if (idempotency_key) {
-        const prev = (await client.query("SELECT p.id as payment_id, a.id as ad_id FROM payments p JOIN ads a ON p.ad_id=a.id WHERE p.meta->>'idempotency_key' = $1 LIMIT 1", [idempotency_key])).rows[0];
+        const prev = (await client.query(
+          "SELECT p.id as payment_id, a.id as ad_id FROM payments p JOIN ads a ON p.ad_id=a.id WHERE p.meta->>'idempotency_key' = $1 LIMIT 1",
+          [idempotency_key]
+        )).rows[0];
         if (prev) return res.json({ success:true, adId: prev.ad_id, paymentId: prev.payment_id, note:'idempotent-return' });
       }
 
       const adId = uid();
-      // Create ad row WITHOUT images. images[] will only be set after payment verification & file movement.
+
+      // Create ad row WITHOUT images. images[] will be set later after payment verification & file movement.
       await client.query(
         'INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
         [adId, seller_id, title, description || '', [], price, currency || 'NGN', quantity || 1, location || '', category || '', subcategory || '', 'pending_payment']
@@ -804,18 +810,46 @@ app.post('/api/ads', async (req, res) => {
       const paymentId = uid();
       const adFee = Number(process.env.AD_FEE_NGN || 1000);
       const tx_ref = `th_ad_${uid()}_${Date.now()}`;
+      // keep temp images in DB meta (ONLY store them server-side, do NOT send to provider)
       const tempImgs = Array.isArray(temp_images) ? temp_images : (Array.isArray(images) ? images : []);
-      const meta = { type:'ad_fee', adId, paymentId, idempotency_key: idempotency_key || null, tx_ref, temp_images: tempImgs };
+      const metaForDB = {
+        type: 'ad_fee',
+        adId,
+        paymentId,
+        idempotency_key: idempotency_key || null,
+        tx_ref,
+        temp_images: tempImgs
+      };
 
-      await client.query('INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
-        paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)
-      ]);
+      // persist payment record with temp_images in meta
+      await client.query(
+        'INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaForDB)]
+      );
 
+      // Build a safe flat metadata object for provider (NO arrays/objects)
       const sellerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [seller_id])).rows[0];
       const email = sellerEmailRow ? sellerEmailRow.email : `seller_${seller_id}@example.com`;
-      const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/ad-callback';
-      const initResp = await initializePayment({ provider: PAYMENT_PROVIDER, email, amount: adFee, metadata: { ...meta, email }, currency: currency || 'NGN', callback_url: callback });
+      const safeMeta = {
+        type: 'ad_fee',
+        adId: String(adId),
+        paymentId: String(paymentId),
+        tx_ref: String(tx_ref),
+        email: String(email),
+        idempotency_key: idempotency_key ? String(idempotency_key) : ''
+      };
 
+      const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/ad-callback';
+      const initResp = await initializePayment({
+        provider: PAYMENT_PROVIDER,
+        email,
+        amount: adFee,
+        metadata: safeMeta,               // <-- SAFE metadata for provider
+        currency: currency || 'NGN',
+        callback_url: callback
+      });
+
+      // store provider_init inside the payments.meta (append to DB meta)
       if (initResp && (initResp.data || initResp.session)) {
         const prov = initResp.data || initResp.session;
         await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
@@ -830,7 +864,6 @@ app.post('/api/ads', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
-
 /////////////////////////////////////////////////////////////////////
 // GET /api/ads (by status) and GET /api/ads/:id
 /////////////////////////////////////////////////////////////////////
