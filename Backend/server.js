@@ -40,15 +40,46 @@ if (process.env.SENDGRID_API_KEY) {
   }
 }
 
-// --- Cloudinary setup: KYC (authenticated) + Ads (public) ---
+// ==============================
+// Cloudinary + multer upload setup
+// (KYC = authenticated/private, Ads = public)
+// Place this near the top of server.js (after requires), OUTSIDE routes
+// ==============================
+'use strict';
+
+
+const multer = require('multer'); // require once at top-level
+
+// Global upload variables (single declarations)
 let cloudinary = null;
 let CloudinaryStorage = null;
-let uploadCloud = null;   // KYC
-let uploadAds = null;     // Ads
+let uploadCloud = null;   // multer instance for KYC (authenticated)
+let uploadAds = null;     // multer instance for Ads (public)
+let diskAdsUpload = null; // multer fallback that stores files on disk
+
+// Utility: cloudinary signed url (works for authenticated resources)
+function cloudinarySignedUrl(public_id, opts = {}) {
+  // opts.resource_type: 'image' or 'video'
+  // opts.type: 'authenticated' or 'upload' (if authenticated, sign_url=true)
+  if (!cloudinary || !public_id) return null;
+  try {
+    const sign = (opts.type === 'authenticated') ? true : false;
+    return cloudinary.url(public_id, {
+      secure: true,
+      sign_url: sign,
+      type: opts.type || 'authenticated',
+      resource_type: opts.resource_type || 'image',
+      ...opts
+    });
+  } catch (e) {
+    console.error('cloudinarySignedUrl error', e && e.message ? e.message : e);
+    return null;
+  }
+}
 
 try {
+  // Configure Cloudinary only if env vars present
   if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-    const multer = require('multer');
     cloudinary = require('cloudinary').v2;
     CloudinaryStorage = require('multer-storage-cloudinary').CloudinaryStorage;
 
@@ -59,7 +90,7 @@ try {
       secure: true
     });
 
-    // KYC storage (private/authenticated)
+    // KYC storage (private / authenticated)
     const kycStorage = new CloudinaryStorage({
       cloudinary,
       params: async (req, file) => {
@@ -67,14 +98,14 @@ try {
         return {
           folder: isVideo ? 'tradehive/kyc/videos' : 'tradehive/kyc/images',
           resource_type: isVideo ? 'video' : 'image',
-          type: 'authenticated',               // private/authenticated for KYC
+          type: 'authenticated', // private
           public_id: `kyc-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
           overwrite: false,
         };
       }
     });
 
-    // ADS storage (public)
+    // Ads storage (public)
     const adsStorage = new CloudinaryStorage({
       cloudinary,
       params: async (req, file) => {
@@ -82,38 +113,97 @@ try {
         return {
           folder: isVideo ? 'tradehive/ads/videos' : 'tradehive/ads/images',
           resource_type: isVideo ? 'video' : 'image',
-          type: 'upload',       // PUBLIC upload for ads
+          type: 'upload', // public
           public_id: `ad-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
           overwrite: false,
         };
       }
     });
 
-    uploadCloud = multer({ storage: kycStorage, limits: { fileSize: 200 * 1024 * 1024 } });
-    uploadAds = multer({ storage: adsStorage, limits: { fileSize: 100 * 1024 * 1024 } });
+    uploadCloud = multer({ storage: kycStorage, limits: { fileSize: 200 * 1024 * 1024 } }); // for KYC
+    uploadAds = multer({ storage: adsStorage, limits: { fileSize: 100 * 1024 * 1024 } });   // for ads
 
-    console.log('Cloudinary configured (kyc:authenticated, ads:public).');
+    console.log('Cloudinary configured: kyc=authenticated, ads=public');
   } else {
-    console.log('Cloudinary not configured: using disk fallback.');
+    console.log('Cloudinary credentials not found — cloudinary disabled, using disk fallback for ads.');
   }
 } catch (err) {
   console.error('Cloudinary setup error:', err && err.message ? err.message : err);
   uploadCloud = null;
   uploadAds = null;
 }
-// fallback disk uploader
-  const uploadsDir = path.resolve(process.cwd(), 'uploads', 'ads');
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  const diskStorage = multer.diskStorage({
-    destination: function (req, file, cb) { cb(null, uploadsDir); },
-    filename: function (req, file, cb) {
-      const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
-      cb(null, `${Date.now()}-${safe}`);
-    }
-  });
-  diskAdsUpload = multer({ storage: diskStorage, limits: { fileSize: 100 * 1024 * 1024 } });
 
+// If cloudinary wasn't available for ads, create a stable disk fallback uploader
+if (!uploadAds) {
+  try {
+    const uploadsDir = path.resolve(process.cwd(), 'uploads', 'ads');
+    fs.mkdirSync(uploadsDir, { recursive: true });
 
+    const diskStorageAds = multer.diskStorage({
+      destination: function (req, file, cb) {
+        cb(null, uploadsDir);
+      },
+      filename: function (req, file, cb) {
+        const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+        cb(null, `${Date.now()}-${safe}`);
+      }
+    });
+
+    diskAdsUpload = multer({ storage: diskStorageAds, limits: { fileSize: 100 * 1024 * 1024 } });
+    console.log('Disk fallback uploader ready for ads ->', uploadsDir);
+  } catch (err) {
+    console.error('Disk fallback setup error:', err && err.message ? err.message : err);
+    diskAdsUpload = null;
+  }
+}
+
+// If cloudinary wasn't available for KYC, you may want disk fallback too (optional)
+if (!uploadCloud) {
+  try {
+    const kycDir = path.resolve(process.cwd(), 'uploads', 'kyc');
+    fs.mkdirSync(kycDir, { recursive: true });
+
+    const diskStorageKyc = multer.diskStorage({
+      destination: function (req, file, cb) { cb(null, kycDir); },
+      filename: function (req, file, cb) {
+        const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+        cb(null, `kyc-${Date.now()}-${safe}`);
+      }
+    });
+
+    // keep separate variable name to avoid overwrite
+    uploadCloud = multer({ storage: diskStorageKyc, limits: { fileSize: 200 * 1024 * 1024 } });
+    console.log('Disk fallback uploader ready for KYC ->', kycDir);
+  } catch (err) {
+    console.error('Disk fallback (KYC) setup error:', err && err.message ? err.message : err);
+    uploadCloud = null;
+  }
+}
+
+/*
+  USAGE NOTES (routes):
+  - For KYC routes (private/authenticated images):
+      app.post('/api/kyc/submit', uploadCloud.fields([
+        { name: 'id_images', maxCount: 6 },
+        { name: 'selfie', maxCount: 1 },
+        { name: 'work_videos', maxCount: 3 }
+      ]), handler)
+
+  - For Ads upload route (public):
+    If uploadAds (cloudinary) is present:
+      app.post('/api/ads/upload', uploadAds.array('images', 6), handler)
+    else if diskAdsUpload is present:
+      app.post('/api/ads/upload', diskAdsUpload.array('images', 6), handler)
+
+  - When returning URLs for KYC (authenticated):
+      const signed = cloudinarySignedUrl(public_id, { type:'authenticated', resource_type:'image' });
+
+  - When returning URLs for Ads (public):
+      // If Cloudinary public uploads used, you can use cloudinary.url(public_id) or the full secure URL in the response (provider returns that)
+*/
+
+// Export globals if you prefer module-style require elsewhere (optional)
+// module.exports = { uploadCloud, uploadAds, diskAdsUpload, cloudinary, cloudinarySignedUrl };
 
 /////////////////////////////////////////////////////////////////////
 // Express setup
