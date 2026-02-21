@@ -19,13 +19,12 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 
-let sendgrid = null;
+let resend = null;
 
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  sendgrid = sgMail;
+if (process.env.RESEND_API_KEY) {
+  resend = new Resend(process.env.RESEND_API_KEY);
 }
 // fetch polyfill if necessary
 let fetchLib = global.fetch;
@@ -307,19 +306,30 @@ function validPhone(p){ return typeof p === 'string' && p.replace(/\D/g,'').leng
 /////////////////////////////////////////////////////////////////////
 // Send email helper (SendGrid or stub)
 /////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+// Send email helper (Resend or stub)
+/////////////////////////////////////////////////////////////////////
 async function sendEmail({ to, subject, text, html }) {
-  if (sendgrid && process.env.SENDGRID_FROM) {
+  if (resend && process.env.RESEND_FROM) {
     try {
-      await sendgrid.send({ to, from: process.env.SENDGRID_FROM, subject, text, html });
+      await resend.emails.send({
+        from: process.env.RESEND_FROM,
+        to,
+        subject,
+        text,
+        html
+      });
+
       console.log('Email sent to', to, subject);
-      return { ok:true };
+      return { ok: true };
+
     } catch (e) {
-      console.error('SendGrid send error', e && e.message ? e.message : e);
-      return { ok:false, error:e };
+      console.error('Resend send error:', e.message);
+      return { ok: false, error: e };
     }
   } else {
     console.log(`[email stub] to=${to} subject=${subject}\n${text || html}`);
-    return { ok:true, stub:true };
+    return { ok: true, stub: true };
   }
 }
 
