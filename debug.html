@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>TradeHive Debug Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: monospace; background:#111; color:#0f0; padding:15px; }
+    button { padding:10px; margin:5px 0; width:100%; font-weight:bold; }
+    pre { background:#000; padding:10px; overflow:auto; max-height:400px; }
+    input { width:100%; padding:8px; margin:5px 0; }
+  </style>
+</head>
+<body>
+
+<h2>TradeHive Debug Panel</h2>
+
+<h3>1️⃣ LocalStorage User</h3>
+<button onclick="showUser()">Show wire_user_v1</button>
+<pre id="userBox"></pre>
+
+<h3>2️⃣ Test Public Ads</h3>
+<button onclick="getPublicAds()">GET /api/ads</button>
+<pre id="publicAds"></pre>
+
+<h3>3️⃣ Test My Ads</h3>
+<input id="userIdInput" placeholder="Enter user_id manually (if needed)" />
+<button onclick="getMyAds()">GET /api/my/ads</button>
+<pre id="myAds"></pre>
+
+<script>
+const BASE = location.origin;
+
+function showUser() {
+  const user = localStorage.getItem('wire_user_v1');
+  document.getElementById('userBox').textContent = user || 'No wire_user_v1 found in localStorage';
+}
+
+async function getPublicAds() {
+  try {
+    const res = await fetch(BASE + '/api/ads');
+    const json = await res.json();
+    document.getElementById('publicAds').textContent = JSON.stringify(json, null, 2);
+  } catch (e) {
+    document.getElementById('publicAds').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function getMyAds() {
+  let user = localStorage.getItem('wire_user_v1');
+  let userId = '';
+
+  if (user) {
+    try {
+      userId = JSON.parse(user).id;
+    } catch(e){}
+  }
+
+  const manualId = document.getElementById('userIdInput').value;
+  if (manualId) userId = manualId;
+
+  if (!userId) {
+    document.getElementById('myAds').textContent = 'No user_id found';
+    return;
+  }
+
+  try {
+    const res = await fetch(BASE + '/api/my/ads?user_id=' + encodeURIComponent(userId));
+    const json = await res.json();
+    document.getElementById('myAds').textContent = JSON.stringify(json, null, 2);
+  } catch (e) {
+    document.getElementById('myAds').textContent = 'Error: ' + e.message;
+  }
+}
+</script>
+
+</body>
+</html>
