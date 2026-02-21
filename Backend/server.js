@@ -1,7 +1,5 @@
 // server.js
-// TradeHive backend (consolidated + debug-enhanced)
-// NOTE: Replace your existing server.js with this file. Keep your env vars intact.
-
+// TradeHive backend — merged + fixed version
 require('dotenv').config();
 
 /////////////////////////////////////////////////////////////////////
@@ -15,30 +13,20 @@ const promClient = require('prom-client');
 const { Pool } = require('pg');
 const IORedis = require('ioredis');
 const { Queue, Worker } = require('bullmq');
+const fetch = global.fetch || require('node-fetch');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 
-let fetchFn = global.fetch || null;
-if (!fetchFn) {
-  try {
-    fetchFn = require('node-fetch');
-    // node-fetch v3 exports a default async function; if it was imported as module, it's fine.
-  } catch (e) {
-    fetchFn = null;
-    console.warn('node-fetch not found and global.fetch absent — network calls may fail.');
-  }
-}
-const fetch = fetchFn;
-
-// Optional Stripe
 let stripeLib = null;
 if (process.env.STRIPE_SECRET_KEY) {
-  try { stripeLib = require('stripe')(process.env.STRIPE_SECRET_KEY); } catch(e){ stripeLib = null; console.warn('stripe lib load error', e); }
+  try { stripeLib = require('stripe')(process.env.STRIPE_SECRET_KEY); } catch(e){ stripeLib = null; }
 }
 
-// SendGrid / Resend: keep sendEmail robust (stub if not configured)
+// Optional email libs: SendGrid or Resend. We'll support SendGrid if present; otherwise stub.
+// If you prefer Resend, set RESEND_API_KEY and modify sendEmail accordingly.
 let sendgrid = null;
 try {
   if (process.env.SENDGRID_API_KEY) {
@@ -46,51 +34,158 @@ try {
     sendgrid.setApiKey(process.env.SENDGRID_API_KEY);
     console.log('SendGrid configured.');
   }
-} catch(e) {
+} catch (e) {
+  console.warn('SendGrid lib not configured or missing, falling back to email stub.');
   sendgrid = null;
-  console.warn('SendGrid package not loaded:', e && e.message ? e.message : e);
 }
-// If you prefer Resend later, swap sendEmail implementation to use "resend" package.
 
 /////////////////////////////////////////////////////////////////////
-// Express + utilities
+// Cloudinary + multer upload setup (KYC = authenticated, Ads = public)
+/////////////////////////////////////////////////////////////////////
+let cloudinary = null;
+let CloudinaryStorage = null;
+let uploadCloud = null;
+let uploadAds = null;
+let diskAdsUpload = null;
+
+const TMP_ADS_DIR = path.join(process.cwd(), 'uploads', 'tmp_ads');
+try { fs.mkdirSync(TMP_ADS_DIR, { recursive: true }); } catch(e){}
+
+function cloudinaryPublicUrl(public_id, opts = {}) {
+  if (!cloudinary || !public_id) return null;
+  try { return cloudinary.url(public_id, { secure: true, type: 'upload', resource_type: opts.resource_type || 'image', ...opts }); }
+  catch (e) { console.error('cloudinaryPublicUrl error', e && e.message ? e.message : e); return null; }
+}
+
+function cloudinarySignedUrl(public_id, opts = {}) {
+  if (!cloudinary || !public_id) return null;
+  try { return cloudinary.url(public_id, { sign_url: true, secure: true, type: opts.type || 'authenticated', resource_type: opts.resource_type || 'image', ...opts }); }
+  catch (e) { console.error('cloudinarySignedUrl error', e && e.message ? e.message : e); return null; }
+}
+
+try {
+  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    cloudinary = require('cloudinary').v2;
+    CloudinaryStorage = require('multer-storage-cloudinary').CloudinaryStorage;
+    cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET, secure: true });
+
+    const kycStorage = new CloudinaryStorage({
+      cloudinary,
+      params: async (req, file) => {
+        const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
+        return {
+          folder: isVideo ? 'tradehive/kyc/videos' : 'tradehive/kyc/images',
+          resource_type: isVideo ? 'video' : 'image',
+          type: 'authenticated',
+          public_id: `kyc-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
+          overwrite: false
+        };
+      }
+    });
+
+    const adsStorage = new CloudinaryStorage({
+      cloudinary,
+      params: async (req, file) => {
+        const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
+        return {
+          folder: isVideo ? 'tradehive/ads/videos' : 'tradehive/ads/images',
+          resource_type: isVideo ? 'video' : 'image',
+          type: 'upload',
+          public_id: `ad-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
+          overwrite: false
+        };
+      }
+    });
+
+    uploadCloud = multer({ storage: kycStorage, limits: { fileSize: 200 * 1024 * 1024 } });
+    uploadAds = multer({ storage: adsStorage, limits: { fileSize: 100 * 1024 * 1024 } });
+
+    console.log('Cloudinary configured: kyc=authenticated, ads=public');
+  } else {
+    console.log('Cloudinary credentials missing — using disk fallback for uploads.');
+  }
+} catch (err) {
+  console.error('Cloudinary setup error', err && err.message ? err.message : err);
+  uploadCloud = null;
+  uploadAds = null;
+}
+
+// Disk fallback for ads
+if (!uploadAds) {
+  try {
+    const uploadsDir = path.resolve(process.cwd(), 'uploads', 'ads');
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    const diskStorageAds = multer.diskStorage({
+      destination: (req, file, cb) => cb(null, uploadsDir),
+      filename: (req, file, cb) => {
+        const safe = file.originalname.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+        cb(null, `${Date.now()}-${safe}`);
+      }
+    });
+    diskAdsUpload = multer({ storage: diskStorageAds, limits: { fileSize: 100 * 1024 * 1024 } });
+    console.log('Disk fallback uploader ready for ads ->', uploadsDir);
+  } catch (err) {
+    console.error('Disk fallback setup error (ads)', err && err.message ? err.message : err);
+    diskAdsUpload = null;
+  }
+}
+
+// Disk fallback for KYC (optional)
+if (!uploadCloud) {
+  try {
+    const kycDir = path.resolve(process.cwd(), 'uploads', 'kyc');
+    fs.mkdirSync(kycDir, { recursive: true });
+    const diskStorageKyc = multer.diskStorage({
+      destination: (req, file, cb) => cb(null, kycDir),
+      filename: (req, file, cb) => {
+        const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+        cb(null, `kyc-${Date.now()}-${safe}`);
+      }
+    });
+    uploadCloud = multer({ storage: diskStorageKyc, limits: { fileSize: 200 * 1024 * 1024 } });
+    console.log('Disk fallback uploader ready for KYC ->', kycDir);
+  } catch (err) {
+    console.error('Disk fallback (KYC) setup error', err && err.message ? err.message : err);
+    uploadCloud = null;
+  }
+}
+
+/////////////////////////////////////////////////////////////////////
+// Express setup
 /////////////////////////////////////////////////////////////////////
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+if (process.env.SENTRY_DSN) {
+  try {
+    const Sentry = require('@sentry/node');
+    Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || 0.2) });
+    app.use(Sentry.Handlers.requestHandler());
+    app.use(Sentry.Handlers.tracingHandler());
+    console.log('Sentry enabled.');
+  } catch(e){ console.warn('Sentry lib missing or init failed'); }
+}
+
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '25mb' })); // allow large json bodies
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
-
-// Simple request logging middleware (debug)
-app.use((req, res, next) => {
-  const start = Date.now();
-  console.log(`[REQ] ${req.method} ${req.originalUrl} - from ${req.ip}`);
-  res.on('finish', () => {
-    const ms = Date.now() - start;
-    console.log(`[RESP] ${req.method} ${req.originalUrl} - ${res.statusCode} ${ms}ms`);
+app.use(express.json({ limit: '18mb' }));
+const limiter = rateLimit({ windowMs: 15*60*1000, max: Number(process.env.RATE_LIMIT_MAX || 300) });
+app.use(limiter);
+promClient.collectDefaultMetrics({ timeout: 5000 });
+const httpRequestCounter = new promClient.Counter({ name: 'tradehive_http_requests_total', help: 'Total number of HTTP requests', labelNames: ['method','route','status_code'] });
+app.use((req,res,next) => {
+  res.on('finish', ()=> {
+    const route = req.route && req.route.path ? req.route.path : req.path || req.originalUrl || 'unknown';
+    httpRequestCounter.inc({ method: req.method, route, status_code: res.statusCode }, 1);
   });
   next();
 });
-
-const limiter = rateLimit({ windowMs: 15*60*1000, max: Number(process.env.RATE_LIMIT_MAX || 300) });
-app.use(limiter);
-
-promClient.collectDefaultMetrics({ timeout: 5000 });
-
-app.get('/metrics', async (req,res) => {
-  res.set('Content-Type', promClient.register.contentType);
-  res.end(await promClient.register.metrics());
-});
+app.get('/metrics', async (req,res) => { res.set('Content-Type', promClient.register.contentType); res.end(await promClient.register.metrics()); });
 
 /////////////////////////////////////////////////////////////////////
-// Postgres pool & simple migrations
+// Postgres & init
 /////////////////////////////////////////////////////////////////////
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 const initSql = `
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, role TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT NOT NULL UNIQUE, fullname TEXT NOT NULL, username TEXT NOT NULL UNIQUE, state TEXT, lga TEXT, city TEXT, gender TEXT, specializations TEXT[], password_hash TEXT, kyc_status TEXT DEFAULT 'Unverified', avatar_url TEXT, profile_complete boolean DEFAULT false, account_details JSONB, online boolean DEFAULT false, created_at TIMESTAMP WITH TIME ZONE DEFAULT now());
@@ -100,9 +195,9 @@ CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, order_id TEXT REFERENC
 CREATE TABLE IF NOT EXISTS kyc_requests (id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), id_type TEXT, id_name TEXT, id_number TEXT, id_images TEXT[], work_videos TEXT[], selfie TEXT, status TEXT DEFAULT 'pending', admin_note TEXT, submitted_at TIMESTAMP WITH TIME ZONE DEFAULT now());
 CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, name TEXT, data JSONB, state TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT now());
 `;
+
 (async ()=>{
-  try { await pool.query(initSql); console.log('DB initialized'); }
-  catch(e){ console.error('DB init error', e); /* don't exit here so dev can iterate */ }
+  try { await pool.query(initSql); console.log('DB initialized'); } catch(e){ console.error('DB init error', e); process.exit(1); }
 })();
 
 /////////////////////////////////////////////////////////////////////
@@ -118,6 +213,17 @@ if (process.env.REDIS_URL) {
 } else {
   console.log('REDIS_URL not set: jobQueue disabled (in-process fallback used for scheduling).');
 }
+
+/////////////////////////////////////////////////////////////////////
+// Disk fallback storage for KYC (already created above) & a generic uploadDisk
+/////////////////////////////////////////////////////////////////////
+const UPLOAD_DIR = path.join(__dirname, 'uploads', 'kyc');
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch(e){ }
+const diskStorage = multer.diskStorage({
+  destination: (req,file,cb)=> cb(null, UPLOAD_DIR),
+  filename: (req,file,cb)=> cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g,'_'))
+});
+const uploadDisk = multer({ storage: diskStorage, limits: { fileSize: 200 * 1024 * 1024 } });
 
 /////////////////////////////////////////////////////////////////////
 // Helpers
@@ -137,7 +243,7 @@ function validEmail(e){ return typeof e === 'string' && e.includes('@'); }
 function validPhone(p){ return typeof p === 'string' && p.replace(/\D/g,'').length >= 9; }
 
 /////////////////////////////////////////////////////////////////////
-// Send email helper (SendGrid or stub)
+// Send email helper (SendGrid or stub) — safe: errors do not stop flow
 /////////////////////////////////////////////////////////////////////
 async function sendEmail({ to, subject, text, html }) {
   if (sendgrid && process.env.SENDGRID_FROM) {
@@ -150,18 +256,16 @@ async function sendEmail({ to, subject, text, html }) {
       return { ok:false, error:e };
     }
   } else {
+    // No provider configured: stub and continue.
     console.log(`[email stub] to=${to} subject=${subject}\n${text || html}`);
     return { ok:true, stub:true };
   }
 }
 
 /////////////////////////////////////////////////////////////////////
-// Working-days helper (skip Saturday/Sunday)
+// Working-days helper (skip weekend)
 /////////////////////////////////////////////////////////////////////
-function isWeekend(d) {
-  const day = d.getDay();
-  return day === 0 || day === 6; // Sunday=0, Saturday=6
-}
+function isWeekend(d) { const day = d.getDay(); return day === 0 || day === 6; }
 function addWorkingDays(date, days) {
   let d = (date instanceof Date) ? new Date(date) : new Date(date);
   let added = 0;
@@ -178,7 +282,7 @@ function msUntil(date) {
 }
 
 /////////////////////////////////////////////////////////////////////
-// Schedule job helper: uses jobQueue if present, otherwise setTimeout fallback
+// scheduling + job handler
 /////////////////////////////////////////////////////////////////////
 async function scheduleJobAt(name, data, targetDate, opts = {}) {
   if (!targetDate) targetDate = new Date();
@@ -188,15 +292,12 @@ async function scheduleJobAt(name, data, targetDate, opts = {}) {
   } else {
     console.warn('Using in-process scheduling (no Redis). This is ephemeral and will not survive restart.');
     setTimeout(async () => {
-      try { await jobHandler(name, data); } catch(e) { console.error('in-process job handler error', e); }
+      try { await jobHandler(name, data); } catch(e){ console.error('in-process job handler error', e); }
     }, delay);
     return { ok:true, fallback:true, scheduledAt: targetDate };
   }
 }
 
-/////////////////////////////////////////////////////////////////////
-// Job handler (used by Worker or in-process fallback)
-/////////////////////////////////////////////////////////////////////
 async function jobHandler(name, data) {
   console.log('Job handler running', name, data);
   if (name === 'notify') {
@@ -217,7 +318,7 @@ async function jobHandler(name, data) {
       const payoutRes = await payoutSeller({ seller, amount: order.amount, currency: order.currency || 'NGN', metadata: { orderId } });
       if (payoutRes && payoutRes.ok) {
         await client.query('UPDATE payments SET payout_status=$1, payout_reference=$2, payout_response=$3 WHERE order_id=$4', ['paid', payoutRes.reference || null, JSON.stringify(payoutRes.raw || {}), orderId]);
-        await sendEmail({ to: seller.email || seller.username, subject: `Payout processed for order ${orderId}`, text: `Payout processed. Reference: ${payoutRes.reference}` });
+        await sendEmail({ to: seller.email || seller.username, subject: `Payout processed for order ${orderId}`, text: `Payout processed. Reference: ${payoutRes.reference}` }).catch(()=>{});
         return { ok:true };
       } else {
         await client.query('UPDATE payments SET payout_status=$1, payout_response=$2 WHERE order_id=$3', ['failed', JSON.stringify(payoutRes || {}), orderId]);
@@ -233,21 +334,21 @@ async function jobHandler(name, data) {
       if (!order) return { ok:false, message:'order-not-found' };
       if (order.status !== 'released') return { ok:true, message:'no-action' };
       if (stage === 1 || stage === 2) {
-        await sendEmail({ to: order.buyer_id, subject: `Reminder: confirm receipt for ${orderId}`, text: `Please confirm receipt for order ${orderId}.` });
-        await sendEmail({ to: order.seller_id, subject: `Reminder sent to buyer for ${orderId}`, text: `A reminder was sent to the buyer.` });
+        await sendEmail({ to: order.buyer_id, subject: `Reminder: confirm receipt for ${orderId}`, text: `Please confirm receipt for order ${orderId}.` }).catch(()=>{});
+        await sendEmail({ to: order.seller_id, subject: `Reminder sent to buyer for ${orderId}`, text: `A reminder was sent to the buyer.` }).catch(()=>{});
         await client.query('UPDATE orders SET release_followup_stage = $1 WHERE id=$2', [stage, orderId]);
         return { ok:true };
       }
       if (stage === 3) {
-        await sendEmail({ to: order.buyer_id, subject: `Final reminder: confirm receipt for ${orderId}`, text: `Final reminder before auto-release.` });
+        await sendEmail({ to: order.buyer_id, subject: `Final reminder: confirm receipt for ${orderId}`, text: `Final reminder before auto-release.` }).catch(()=>{});
         await client.query('UPDATE orders SET release_followup_stage = $1 WHERE id=$2', [stage, orderId]);
         return { ok:true };
       }
       if (stage === 4) {
         await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['completed', orderId]);
         await scheduleJobAt('payout-seller', { orderId }, new Date());
-        await sendEmail({ to: order.seller_id, subject: `Auto-release: funds released for ${orderId}`, text: `Funds are being released (auto-resolve).` });
-        await sendEmail({ to: order.buyer_id, subject: `Order auto-resolved for ${orderId}`, text: `The order was auto-resolved and funds released to seller.` });
+        await sendEmail({ to: order.seller_id, subject: `Auto-release: funds released for ${orderId}`, text: `Funds are being released (auto-resolve).` }).catch(()=>{});
+        await sendEmail({ to: order.buyer_id, subject: `Order auto-resolved for ${orderId}`, text: `The order was auto-resolved and funds released to seller.` }).catch(()=>{});
         return { ok:true };
       }
       return { ok:true };
@@ -257,22 +358,18 @@ async function jobHandler(name, data) {
 }
 
 if (jobQueue) {
-  jobWorker = new Worker('tradehive-jobs', async job => {
-    return await jobHandler(job.name, job.data || job.data);
-  }, { connection: redis });
+  jobWorker = new Worker('tradehive-jobs', async job => await jobHandler(job.name, job.data || job.data), { connection: redis });
   jobWorker.on('completed', job => console.log('Job completed', job.name, job.id));
   jobWorker.on('failed', (job, err) => console.error('Job failed', job.name, err && err.message));
 }
 
 /////////////////////////////////////////////////////////////////////
-// Payment provider helpers (initializePayment & payoutSeller)
+// Payment helpers
 /////////////////////////////////////////////////////////////////////
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
 
 /**
- * sanitizeMetadata(obj)
- * returns a flat plain-object with primitives only (strings/numbers/booleans).
- * This prevents Flutterwave/Paystack "invalid metadata" errors from nested objects/arrays.
+ * sanitizeMetadata - returns flat primitive-only metadata to avoid provider errors
  */
 function sanitizeMetadata(obj = {}) {
   const out = {};
@@ -287,7 +384,6 @@ function sanitizeMetadata(obj = {}) {
         const sval = String(v);
         out[String(k)] = sval.length > maxLen ? sval.slice(0, maxLen) : sval;
       } else {
-        // skip arrays/objects to avoid provider "invalid metadata" errors
         continue;
       }
     } catch (e) { continue; }
@@ -304,17 +400,8 @@ async function initializePayment({ provider = PAYMENT_PROVIDER, email, amount, c
   if (provider === 'paystack') {
     const key = process.env.PAYSTACK_SECRET_KEY;
     if (!key) throw new Error('PAYSTACK_SECRET_KEY not set');
-    const body = {
-      email,
-      amount: Math.round(Number(amount) * 100),
-      callback_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback',
-      metadata: safeMetadata
-    };
-    const res = await fetch('https://api.paystack.co/transaction/initialize', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const body = { email, amount: Math.round(Number(amount) * 100), callback_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback', metadata: safeMetadata };
+    const res = await fetch('https://api.paystack.co/transaction/initialize', { method:'POST', headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
     return await res.json();
   }
 
@@ -322,19 +409,8 @@ async function initializePayment({ provider = PAYMENT_PROVIDER, email, amount, c
     const key = process.env.FLUTTERWAVE_SECRET_KEY;
     if (!key) throw new Error('FLUTTERWAVE_SECRET_KEY not set');
     const tx_ref = safeMetadata.tx_ref || metadata.tx_ref || ('th_' + uid());
-    const requestBody = {
-      tx_ref,
-      amount: String(amount),
-      currency,
-      redirect_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback',
-      customer: { email: safeMetadata.email || email || '', phonenumber: safeMetadata.phone || '' },
-      meta: safeMetadata
-    };
-    const res = await fetch('https://api.flutterwave.com/v3/payments', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    const requestBody = { tx_ref, amount: String(amount), currency, redirect_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback', customer: { email: safeMetadata.email || email || '', phonenumber: safeMetadata.phone || '' }, meta: safeMetadata };
+    const res = await fetch('https://api.flutterwave.com/v3/payments', { method:'POST', headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify(requestBody) });
     return await res.json();
   }
 
@@ -343,18 +419,15 @@ async function initializePayment({ provider = PAYMENT_PROVIDER, email, amount, c
     const session = await stripeLib.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
-      line_items: [{
-        price_data: { currency, product_data: { name: safeMetadata.title || 'TradeHive' }, unit_amount: Math.round(Number(amount) * 100) },
-        quantity: 1
-      }],
+      line_items: [{ price_data: { currency, product_data: { name: safeMetadata.title || 'TradeHive' }, unit_amount: Math.round(Number(amount) * 100) }, quantity: 1 }],
       success_url: (process.env.CALLBACK_BASE_URL || '') + '/pay/success?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: (process.env.CALLBACK_BASE_URL || '') + '/pay/cancel',
       metadata: safeMetadata
     });
-    return { ok: true, url: session.url, session };
+    return { ok:true, url: session.url, session };
   }
 
-  return { ok: true, url: callback_url || '/', message: 'provider-not-configured' };
+  return { ok:true, url: callback_url || '/', message:'provider-not-configured' };
 }
 
 function verifyPaystackSignature(req) {
@@ -419,143 +492,13 @@ async function payoutSeller({ seller, amount, currency='NGN', metadata={} }) {
 }
 
 /////////////////////////////////////////////////////////////////////
-// Cloudinary + multer upload setup (KYC = authenticated/private, Ads = public)
-/////////////////////////////////////////////////////////////////////
-const multer = require('multer');
-
-let cloudinary = null;
-let CloudinaryStorage = null;
-let uploadCloud = null;   // multer instance for KYC (authenticated)
-let uploadAds = null;     // multer instance for Ads (public)
-let diskAdsUpload = null; // multer fallback that stores files on disk
-
-// TMP_ADS_DIR: where to write temp ad uploads when cloudinary not used yet
-const TMP_ADS_DIR = path.join(process.cwd(), 'uploads', 'tmp_ads');
-try { fs.mkdirSync(TMP_ADS_DIR, { recursive: true }); } catch(e) {}
-
-function cloudinaryPublicUrl(public_id, opts = {}) {
-  if (!cloudinary || !public_id) return null;
-  try {
-    return cloudinary.url(public_id, { secure: true, type: opts.type || 'upload', resource_type: opts.resource_type || 'image', ...opts });
-  } catch (e) {
-    console.error('cloudinaryPublicUrl error', e && e.message ? e.message : e);
-    return null;
-  }
-}
-
-function cloudinarySignedUrl(public_id, opts = {}) {
-  if (!cloudinary || !public_id) return null;
-  try {
-    const sign = (opts.type === 'authenticated') ? true : false;
-    return cloudinary.url(public_id, { secure:true, sign_url: sign, type: opts.type || 'authenticated', resource_type: opts.resource_type || 'image', ...opts });
-  } catch (e) {
-    console.error('cloudinarySignedUrl error', e && e.message ? e.message : e);
-    return null;
-  }
-}
-
-try {
-  if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-    cloudinary = require('cloudinary').v2;
-    CloudinaryStorage = require('multer-storage-cloudinary').CloudinaryStorage;
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-      secure: true
-    });
-
-    const kycStorage = new CloudinaryStorage({
-      cloudinary,
-      params: async (req, file) => {
-        const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
-        return {
-          folder: isVideo ? 'tradehive/kyc/videos' : 'tradehive/kyc/images',
-          resource_type: isVideo ? 'video' : 'image',
-          type: 'authenticated',
-          public_id: `kyc-${Date.now()}-${file.originalname.replace(/\s+/g,'_')}`,
-          overwrite: false,
-        };
-      }
-    });
-
-    const adsStorage = new CloudinaryStorage({
-      cloudinary,
-      params: async (req, file) => {
-        const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
-        return {
-          folder: isVideo ? 'tradehive/ads/videos' : 'tradehive/ads/images',
-          resource_type: isVideo ? 'video' : 'image',
-          type: 'upload',
-          public_id: `ad-${Date.now()}-${file.originalname.replace(/\s+/g,'_')}`,
-          overwrite: false,
-        };
-      }
-    });
-
-    uploadCloud = multer({ storage: kycStorage, limits: { fileSize: 200 * 1024 * 1024 } });
-    uploadAds = multer({ storage: adsStorage, limits: { fileSize: 100 * 1024 * 1024 } });
-
-    console.log('Cloudinary configured: kyc=authenticated, ads=public');
-  } else {
-    console.log('Cloudinary credentials not found — cloudinary disabled, using disk fallback for ads.');
-  }
-} catch (err) {
-  console.error('Cloudinary setup error:', err && err.message ? err.message : err);
-  uploadCloud = null; uploadAds = null;
-}
-
-// Disk fallback for ads
-if (!uploadAds) {
-  try {
-    const uploadsDir = path.resolve(process.cwd(), 'uploads', 'ads');
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    const diskStorageAds = multer.diskStorage({
-      destination: function (req, file, cb) { cb(null, uploadsDir); },
-      filename: function (req, file, cb) {
-        const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
-        cb(null, `${Date.now()}-${safe}`);
-      }
-    });
-    diskAdsUpload = multer({ storage: diskStorageAds, limits: { fileSize: 100 * 1024 * 1024 } });
-    console.log('Disk fallback uploader ready for ads ->', uploadsDir);
-  } catch (err) { console.error('Disk fallback setup error:', err && err.message ? err.message : err); diskAdsUpload = null; }
-}
-
-// Disk fallback for KYC
-if (!uploadCloud) {
-  try {
-    const kycDir = path.resolve(process.cwd(), 'uploads', 'kyc');
-    fs.mkdirSync(kycDir, { recursive: true });
-    const diskStorageKyc = multer.diskStorage({
-      destination: function (req, file, cb) { cb(null, kycDir); },
-      filename: function (req, file, cb) {
-        const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
-        cb(null, `kyc-${Date.now()}-${safe}`);
-      }
-    });
-    uploadCloud = multer({ storage: diskStorageKyc, limits: { fileSize: 200 * 1024 * 1024 } });
-    console.log('Disk fallback uploader ready for KYC ->', kycDir);
-  } catch (err) { console.error('Disk fallback (KYC) setup error:', err && err.message ? err.message : err); uploadCloud = null; }
-}
-
-// expose tmp_ads static route so uploaded tmp files can be served if cloudinary wasn't used
-try {
-  const staticTmpAds = path.join(process.cwd(), 'uploads', 'tmp_ads');
-  fs.mkdirSync(staticTmpAds, { recursive: true });
-  app.use('/uploads/tmp_ads', express.static(staticTmpAds));
-  app.use('/uploads/ads', express.static(path.join(process.cwd(), 'uploads', 'ads')));
-  app.use('/uploads/kyc', express.static(path.join(process.cwd(), 'uploads', 'kyc')));
-} catch (e) {
-  console.warn('Could not create static upload folders', e && e.message ? e.message : e);
-}
-/////////////////////////////////////////////////////////////////////
-// small helpers for files & images
+// Helper: fileUrlFromMulterFile
 /////////////////////////////////////////////////////////////////////
 function fileUrlFromMulterFile(file) {
   if (!file) return null;
   return file.path || file.location || file.secure_url || file.url || (file.filename ? `/uploads/ads/${file.filename}` : null) || null;
 }
+
 function mapAdImagesForResponse(imagesArray) {
   if (!imagesArray) return [];
   return imagesArray.map(item => {
@@ -565,37 +508,24 @@ function mapAdImagesForResponse(imagesArray) {
       if (cloudinary) return cloudinaryPublicUrl(item) || item;
       return item;
     }
-    if (typeof item === 'object') return item.url || item.secure_url || item.path || item.location || null;
+    if (typeof item === 'object') {
+      return item.url || item.secure_url || item.path || item.location || null;
+    }
     return null;
   }).filter(Boolean);
 }
 
 /////////////////////////////////////////////////////////////////////
-// API routes start here (kept your original routes + logic)
-// - KYC submit
-// - register/login
-// - kyc status
-// - ads create (idempotent style -> ad row created with pending_payment, images set after verification)
-// - ads list/get
-// - ads buy -> creates order + payment
-// - payment verification -> verifyAndProcessProviderPayment (heavy debug added)
-// - webhooks
-// - admin endpoints
-// - user endpoints
+// Upload middleware selection for Ads
 /////////////////////////////////////////////////////////////////////
-
-// Choose upload middleware for ads
 const adsUploadMiddleware = uploadAds ? uploadAds.array('images', 8) : (diskAdsUpload ? diskAdsUpload.array('images', 8) : (req, res, next) => next());
-const uploadHandler = uploadCloud || multer({ storage: multer.diskStorage({ destination: (req,f,cb)=>cb(null, path.join(process.cwd(),'uploads','kyc')), filename:(req,file,cb)=>cb(null,Date.now()+'-'+file.originalname.replace(/\s+/g,'_')) }) });
+const uploadHandler = uploadCloud || uploadDisk;
 
-// KYC submit
-app.post('/api/kyc/submit', uploadHandler.fields([
-  { name: 'id_images', maxCount: 6 },
-  { name: 'work_videos', maxCount: 2 },
-  { name: 'selfie', maxCount: 1 }
-]), async (req, res) => {
+//////////////////////////////////////////////////////////
+// Routes: KYC submit + status
+/////////////////////////////////////////////////////////////////////
+app.post('/api/kyc/submit', uploadHandler.fields([{ name:'id_images', maxCount: 6 }, { name:'work_videos', maxCount: 2 }, { name:'selfie', maxCount: 1 }]), async (req, res) => {
   try {
-    console.log('/api/kyc/submit hit - files:', Object.keys(req.files || {}));
     const body = req.body || {};
     const userId = body.userId || body.user_id;
     if (!userId) return res.status(400).json({ success:false, message:'userId required' });
@@ -619,15 +549,16 @@ app.post('/api/kyc/submit', uploadHandler.fields([
     if ((files.selfie || [])[0]) selfiePath = fileInfoToUrl((files.selfie || [])[0]);
 
     const reqId = 'kyc_' + uid();
+    const insert = `INSERT INTO kyc_requests (id, user_id, id_type, id_name, id_number, id_images, work_videos, selfie, status, submitted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())`;
     const client = await pool.connect();
     try {
       const serialize = arr => (arr || []).map(i => typeof i === 'object' && i.public_id ? i.public_id : (typeof i === 'string' ? i : null)).filter(Boolean);
       const selfieStored = (typeof selfiePath === 'object' && selfiePath.public_id) ? selfiePath.public_id : (typeof selfiePath === 'string' ? selfiePath : null);
-      const insert = `INSERT INTO kyc_requests (id, user_id, id_type, id_name, id_number, id_images, work_videos, selfie, status, submitted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())`;
+
       await client.query(insert, [reqId, userId, body.id_type || null, body.id_name || null, body.id_number || null, serialize(idImages), serialize(workVideos), selfieStored, 'pending']);
       await client.query('UPDATE users SET kyc_status=$1 WHERE id=$2', ['pending', userId]);
       if (process.env.ADMIN_EMAIL) {
-        await sendEmail({ to: process.env.ADMIN_EMAIL, subject: `KYC submitted by ${userId}`, text: `User ${userId} submitted KYC. Review at admin UI.` });
+        try { await sendEmail({ to: process.env.ADMIN_EMAIL, subject: `KYC submitted by ${userId}`, text: `User ${userId} submitted KYC. Review at admin UI.` }); } catch(e){ console.warn('sendEmail failed', e && e.message); }
       }
       return res.json({ success:true, requestId: reqId });
     } finally { client.release(); }
@@ -637,96 +568,6 @@ app.post('/api/kyc/submit', uploadHandler.fields([
   }
 });
 
-// register/login
-app.post('/api/register', async (req, res) => {
-  try {
-    const { role, email, phone, fullname, username, state, lga, city, gender, specializations, password } = req.body || {};
-    if (!email || !validEmail(email)) return res.status(400).json({ success:false, message:'Invalid email' });
-    if (!phone || !validPhone(phone)) return res.status(400).json({ success:false, message:'Invalid phone' });
-    if (!fullname || fullname.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid full name' });
-    if (!username || username.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid username' });
-    if (!state || !lga || !city) return res.status(400).json({ success:false, message:'State/LGA/City required' });
-    if (!password || password.length < 6) return res.status(400).json({ success:false, message:'Password must be at least 6 characters' });
-
-    const client = await pool.connect();
-    try {
-      const dupQuery = `SELECT email, username, phone FROM users WHERE email = $1 OR username = $2 OR phone = $3 LIMIT 1`;
-      const dupRes = await client.query(dupQuery, [email, username, phone]);
-      if (dupRes.rows.length) return res.status(409).json({ success:false, message: 'Email, username or phone already exists' });
-
-      const salt = await bcrypt.genSalt(10);
-      const hash = await bcrypt.hash(password, salt);
-      const newUser = {
-        id: uid(),
-        role: role || 'client',
-        email, phone, fullname, username,
-        state, lga, city,
-        gender: gender || 'other',
-        specializations: Array.isArray(specializations) ? specializations : [],
-        password_hash: hash
-      };
-      const insertSql = `
-        INSERT INTO users (id, role, email, phone, fullname, username, state, lga, city, gender, specializations, password_hash)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      `;
-      await client.query(insertSql, [
-        newUser.id, newUser.role, newUser.email, newUser.phone, newUser.fullname, newUser.username,
-        newUser.state, newUser.lga, newUser.city, newUser.gender, newUser.specializations, newUser.password_hash
-      ]);
-      return res.json({ success:true, message:'Account created successfully', userId: newUser.id });
-    } finally { client.release(); }
-  } catch (err) {
-    console.error('Server error /api/register', err);
-    return res.status(500).json({ success:false, message:'Server error' });
-  }
-});
-
-app.post('/api/login', async (req, res) => {
-  try {
-    const { login, password } = req.body || {};
-    if (!login || !password) return res.status(400).json({ success: false, message: 'Login and password required' });
-    const loginValue = String(login).trim();
-    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-    const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
-
-    if (loginValue === ADMIN_USERNAME) {
-      if (ADMIN_PASSWORD_HASH && await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) {
-        return res.json({ success:true, message:'Admin login successful', role:'admin', user:null });
-      }
-      return res.status(401).json({ success:false, message:'Invalid credentials' });
-    }
-
-    const client = await pool.connect();
-    try {
-      const q = `SELECT * FROM users WHERE email=$1 OR username=$1 OR phone=$1 LIMIT 1`;
-      const r = await client.query(q, [loginValue]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'User not found' });
-      const user = r.rows[0];
-      const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) return res.status(401).json({ success:false, message:'Incorrect password' });
-
-      const safeUser = {
-        id: user.id, role: user.role, email: user.email, phone: user.phone,
-        fullname: user.fullname, username: user.username, city: user.city, kyc_status: user.kyc_status,
-        avatar_url: user.avatar_url, online: user.online, account_details: user.account_details
-      };
-
-      if ((user.role || '').toLowerCase() === 'staff') {
-        const BASE = process.env.ADMIN_UI_BASE || 'https://your-admin-ui.example.com';
-        return res.json({ success:true, message:'Staff login', role:'staff', user:safeUser, redirect: BASE + '/staff' });
-      }
-      return res.json({ success:true, message:'Login successful', role:user.role||'client', user:safeUser });
-    } finally { client.release(); }
-  } catch (e) {
-    console.error('Server error /api/login', e);
-    return res.status(500).json({ success:false, message:'Server error' });
-  }
-});
-
-app.get('/', (req,res)=> res.send('TradeHive backend running'));
-/////////////////////////////////////////////////////////////////////
-// GET /api/kyc/status/:userId
-/////////////////////////////////////////////////////////////////////
 app.get('/api/kyc/status/:id', async (req, res) => {
   try {
     const userId = req.params.id;
@@ -743,10 +584,7 @@ app.get('/api/kyc/status/:id', async (req, res) => {
         return arr.map(item => {
           if (!item) return null;
           if (typeof item === 'string' && cloudinary) return cloudinarySignedUrl(item, { resource_type });
-          if (typeof item === 'string') {
-            if (item.startsWith('/') || item.indexOf('/') === -1) return item;
-            return item;
-          }
+          if (typeof item === 'string') return item;
           return null;
         }).filter(Boolean);
       }
@@ -779,7 +617,78 @@ app.get('/api/kyc/status/:id', async (req, res) => {
 });
 
 /////////////////////////////////////////////////////////////////////
-// POST /api/ads - create ad (no images) + payment for ad fee (temp_images may be passed)
+// Auth: register & login
+/////////////////////////////////////////////////////////////////////
+app.post('/api/register', async (req, res) => {
+  try {
+    const { role, email, phone, fullname, username, state, lga, city, gender, specializations, password } = req.body || {};
+    if (!email || !validEmail(email)) return res.status(400).json({ success:false, message:'Invalid email' });
+    if (!phone || !validPhone(phone)) return res.status(400).json({ success:false, message:'Invalid phone' });
+    if (!fullname || fullname.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid full name' });
+    if (!username || username.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid username' });
+    if (!state || !lga || !city) return res.status(400).json({ success:false, message:'State/LGA/City required' });
+    if (!password || password.length < 6) return res.status(400).json({ success:false, message:'Password must be at least 6 characters' });
+
+    const client = await pool.connect();
+    try {
+      const dupQuery = `SELECT email, username, phone FROM users WHERE email = $1 OR username = $2 OR phone = $3 LIMIT 1`;
+      const dupRes = await client.query(dupQuery, [email, username, phone]);
+      if (dupRes.rows.length) return res.status(409).json({ success:false, message: 'Email, username or phone already exists' });
+
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(password, salt);
+      const newUser = { id: uid(), role: role || 'client', email, phone, fullname, username, state, lga, city, gender: gender || 'other', specializations: Array.isArray(specializations) ? specializations : [], password_hash: hash };
+      const insertSql = `INSERT INTO users (id, role, email, phone, fullname, username, state, lga, city, gender, specializations, password_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`;
+      await client.query(insertSql, [newUser.id, newUser.role, newUser.email, newUser.phone, newUser.fullname, newUser.username, newUser.state, newUser.lga, newUser.city, newUser.gender, newUser.specializations, newUser.password_hash]);
+      return res.json({ success:true, message:'Account created successfully', userId: newUser.id });
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('Server error /api/register', err);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { login, password } = req.body || {};
+    if (!login || !password) return res.status(400).json({ success: false, message: 'Login and password required' });
+    const loginValue = String(login).trim();
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+    const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
+
+    if (loginValue === ADMIN_USERNAME) {
+      if (ADMIN_PASSWORD_HASH && await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) return res.json({ success:true, message:'Admin login successful', role:'admin', user:null });
+      return res.status(401).json({ success:false, message:'Invalid credentials' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const q = `SELECT * FROM users WHERE email=$1 OR username=$1 OR phone=$1 LIMIT 1`;
+      const r = await client.query(q, [loginValue]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'User not found' });
+      const user = r.rows[0];
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) return res.status(401).json({ success:false, message:'Incorrect password' });
+
+      const safeUser = { id: user.id, role: user.role, email: user.email, phone: user.phone, fullname: user.fullname, username: user.username, city: user.city, kyc_status: user.kyc_status, avatar_url: user.avatar_url, online: user.online, account_details: user.account_details };
+
+      if ((user.role || '').toLowerCase() === 'staff') {
+        const BASE = process.env.ADMIN_UI_BASE || 'https://your-admin-ui.example.com';
+        return res.json({ success:true, message:'Staff login', role:'staff', user:safeUser, redirect: BASE + '/staff' });
+      }
+
+      return res.json({ success:true, message:'Login successful', role:user.role||'client', user:safeUser });
+    } finally { client.release(); }
+  } catch (e) {
+    console.error('Server error /api/login', e);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.get('/', (req,res)=> res.send('TradeHive backend running'));
+
+/////////////////////////////////////////////////////////////////////
+// ADS routes: create ad (store ad WITHOUT images until payment verified)
 /////////////////////////////////////////////////////////////////////
 app.post('/api/ads', async (req, res) => {
   try {
@@ -795,10 +704,7 @@ app.post('/api/ads', async (req, res) => {
       }
 
       const adId = uid();
-      await client.query(
-        'INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-        [adId, seller_id, title, description || '', [], price, currency || 'NGN', quantity || 1, location || '', category || '', subcategory || '', 'pending_payment']
-      );
+      await client.query('INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [adId, seller_id, title, description || '', [], price, currency || 'NGN', quantity || 1, location || '', category || '', subcategory || '', 'pending_payment']);
 
       const paymentId = uid();
       const adFee = Number(process.env.AD_FEE_NGN || 1000);
@@ -806,9 +712,7 @@ app.post('/api/ads', async (req, res) => {
       const tempImgs = Array.isArray(temp_images) ? temp_images : (Array.isArray(images) ? images : []);
       const meta = { type:'ad_fee', adId, paymentId, idempotency_key: idempotency_key || null, tx_ref, temp_images: tempImgs };
 
-      await client.query('INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [
-        paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)
-      ]);
+      await client.query('INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)]);
 
       const sellerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [seller_id])).rows[0];
       const email = sellerEmailRow ? sellerEmailRow.email : `seller_${seller_id}@example.com`;
@@ -829,657 +733,3 @@ app.post('/api/ads', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
-
-/////////////////////////////////////////////////////////////////////
-// GET /api/ads and GET /api/ads/:id
-/////////////////////////////////////////////////////////////////////
-app.get('/api/ads', async (req, res) => {
-  try {
-    const status = req.query.status || 'live';
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE status=$1 ORDER BY created_at DESC LIMIT 500', [status]);
-      return res.json({ success:true, ads: r.rows });
-    } finally { client.release(); }
-  } catch (e) { console.error('GET /api/ads error', e); return res.status(500).json({ success:false }); }
-});
-
-app.get('/api/ads/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      const ad = r.rows[0];
-      // attach mapped images for frontend convenience
-      ad.images = mapAdImagesForResponse(ad.images);
-      return res.json({ success:true, ad });
-    } finally { client.release(); }
-  } catch (e) { console.error('GET /api/ads/:id', e); return res.status(500).json({ success:false }); }
-});
-
-/////////////////////////////////////////////////////////////////////
-// POST /api/ads/:id/buy (create order + payment)
-/////////////////////////////////////////////////////////////////////
-app.post('/api/ads/:id/buy', async (req, res) => {
-  const adId = req.params.id;
-  const { buyer_id, qty = 1, idempotency_key } = req.body || {};
-  if (!buyer_id) return res.status(400).json({ success:false, message:'buyer_id required' });
-
-  const client = await pool.connect();
-  try {
-    if (idempotency_key) {
-      const existing = (await client.query("SELECT p.* FROM payments p WHERE p.meta->>'idempotency_key' = $1 LIMIT 1", [idempotency_key])).rows[0];
-      if (existing) return res.json({ success:true, orderId: existing.order_id, paymentId: existing.id, note:'idempotent-return' });
-    }
-
-    const adRes = (await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [adId])).rows[0];
-    if (!adRes) return res.status(404).json({ success:false, message:'ad-not-found' });
-
-    const amount = Number(adRes.price) * Number(qty);
-    const orderId = uid();
-
-    await client.query('BEGIN');
-    await client.query('INSERT INTO orders (id, ad_id, buyer_id, seller_id, qty, amount, currency, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [orderId, adId, buyer_id, adRes.seller_id, qty, amount, adRes.currency || 'NGN', 'pending_payment']);
-
-    const paymentId = uid();
-    const tx_ref = 'th_order_' + uid() + '_' + Date.now();
-    const metaObj = { type:'order', orderId, paymentId, idempotency_key: idempotency_key || null, tx_ref };
-    await client.query('INSERT INTO payments (id, order_id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [paymentId, orderId, adId, buyer_id, PAYMENT_PROVIDER, amount, adRes.currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]);
-
-    const buyerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [buyer_id])).rows[0];
-    const email = buyerEmailRow ? buyerEmailRow.email : `buyer_${buyer_id}@example.com`;
-    const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/order-callback';
-    const initResp = await initializePayment({ provider: PAYMENT_PROVIDER, email, amount, metadata: { ...metaObj, email }, currency: adRes.currency || 'NGN', callback_url: callback });
-
-    if (initResp && (initResp.data || initResp.session)) {
-      const prov = initResp.data || initResp.session;
-      await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
-      const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
-      if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
-    }
-
-    await client.query('COMMIT');
-    return res.json({ success:true, orderId, paymentId, init: initResp });
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch(_) {}
-    console.error('POST /api/ads/:id/buy error', err);
-    return res.status(500).json({ success:false, message:'Server error' });
-  } finally { client.release(); }
-});
-
-/////////////////////////////////////////////////////////////////////
-// verifyAndProcessProviderPayment - strong debug logging added
-/////////////////////////////////////////////////////////////////////
-async function verifyAndProcessProviderPayment(req, res) {
-  // Accept req so we can build URLs and read query params safely.
-  try {
-    const rawQuery = req.query || {};
-    const provider = (rawQuery.provider || process.env.PAYMENT_PROVIDER || 'paystack').toString().toLowerCase();
-
-    // Normalize many possible query param names
-    const tx_ref = rawQuery.tx_ref || rawQuery.txref || rawQuery.txReference || rawQuery.reference || rawQuery.tx || rawQuery.txref || null;
-    let transaction_id = rawQuery.transaction_id || rawQuery.transactionId || rawQuery.transaction || rawQuery.id || rawQuery.flw_ref || null;
-
-    console.log('===== verifyAndProcessProviderPayment start =====');
-    console.log('provider:', provider, 'tx_ref:', tx_ref, 'transaction_id (raw):', transaction_id);
-    console.log('rawQuery:', JSON.stringify(rawQuery));
-
-    let verifyResp = null;
-
-    if (provider === 'flutterwave') {
-      if (!process.env.FLUTTERWAVE_SECRET_KEY) {
-        console.warn('Flutterwave not configured on server.');
-        return res.status(500).send('Flutterwave not configured on server.');
-      }
-
-      // Try to resolve transaction_id from tx_ref if missing
-      if (!transaction_id && tx_ref) {
-        try {
-          const c = await pool.connect();
-          try {
-            const q = await c.query("SELECT meta FROM payments WHERE meta->>'tx_ref' = $1 OR reference = $1 LIMIT 1", [String(tx_ref)]);
-            if (q.rows.length && q.rows[0].meta) {
-              const m = q.rows[0].meta;
-              if (m.provider_init && m.provider_init.data && (m.provider_init.data.id || m.provider_init.data.flw_ref)) {
-                transaction_id = m.provider_init.data.id || m.provider_init.data.flw_ref || transaction_id;
-                console.log('Resolved transaction_id from payments.meta.provider_init.data ->', transaction_id);
-              }
-              if (!transaction_id && m.provider_init && (m.provider_init.reference || m.provider_init.id)) {
-                transaction_id = m.provider_init.reference || m.provider_init.id;
-                console.log('Resolved transaction_id from payments.meta.provider_init ->', transaction_id);
-              }
-            }
-          } finally { c.release(); }
-        } catch (e) {
-          console.warn('While trying to resolve transaction_id from DB by tx_ref:', e && e.message ? e.message : e);
-        }
-      }
-
-      if (!transaction_id) {
-        console.warn('Flutterwave callback: transaction_id missing (and not discoverable). Query:', rawQuery);
-        return res.status(400).send('Transaction id required for Flutterwave verification.');
-      }
-
-      console.log('Calling Flutterwave verify endpoint for transaction_id:', transaction_id);
-      const r = await fetch(`https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`, {
-        headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`, 'Content-Type':'application/json' }
-      });
-      try {
-        verifyResp = await r.json();
-      } catch (e) {
-        console.error('Failed to parse flutterwave verify response as json', e);
-        const text = await r.text().catch(()=>null);
-        console.error('Raw response text:', text);
-        return res.status(500).send('Failed to parse provider response.');
-      }
-      console.log('Flutterwave verify response:', JSON.stringify(verifyResp, null, 2));
-      if (!(verifyResp && verifyResp.status === 'success' && verifyResp.data && (verifyResp.data.status === 'successful' || verifyResp.data.status === 'success'))) {
-        console.warn('Flutterwave verify failed', verifyResp);
-        return res.status(400).send('Flutterwave verification failed.');
-      }
-    } else if (provider === 'paystack') {
-      if (!process.env.PAYSTACK_SECRET_KEY) {
-        console.warn('Paystack not configured on server.');
-        return res.status(500).send('Paystack not configured on server.');
-      }
-      const paystackBase = 'https://api.paystack.co';
-      const attemptVerify = async (ref) => {
-        try {
-          const r = await fetch(`${paystackBase}/transaction/verify/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, 'Content-Type':'application/json' } });
-          return await r.json().catch(()=>null);
-        } catch(e){ return null; }
-      };
-      let j = null;
-      if (transaction_id) {
-        console.log('Attempting Paystack verify using transaction_id:', transaction_id);
-        j = await attemptVerify(transaction_id);
-      }
-      if (!j && tx_ref) {
-        console.log('Attempting Paystack verify using tx_ref:', tx_ref);
-        j = await attemptVerify(tx_ref);
-      }
-      console.log('Paystack verify result:', j);
-      if (!j || !j.status) { console.warn('Paystack verify failed', j); return res.status(400).send('Paystack verification failed.'); }
-      verifyResp = j;
-    } else if (provider === 'stripe') {
-      verifyResp = { data: rawQuery || {} };
-    } else {
-      return res.status(400).send('Unsupported provider.');
-    }
-
-    // now process DB updates
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // build a set of candidate references
-      const candidates = new Set();
-      if (verifyResp && verifyResp.data) {
-        const d = verifyResp.data;
-        if (d.reference) candidates.add(String(d.reference));
-        if (d.tx_ref) candidates.add(String(d.tx_ref));
-        if (d.flw_ref) candidates.add(String(d.flw_ref));
-        if (d.id) candidates.add(String(d.id));
-      }
-      if (tx_ref) candidates.add(String(tx_ref));
-      if (transaction_id) candidates.add(String(transaction_id));
-      const uniq = Array.from(candidates).filter(Boolean);
-      console.log('Candidate payment identifiers:', uniq);
-
-      let paymentRow = null;
-      for (const c of uniq) {
-        const q1 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [c]);
-        if (q1.rows.length) { paymentRow = q1.rows[0]; break; }
-        const q2 = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [c]);
-        if (q2.rows.length) { paymentRow = q2.rows[0]; break; }
-        const q3 = await client.query("SELECT * FROM payments WHERE (meta->>'paymentId' = $1 OR meta->>'orderId' = $1 OR meta->>'adId' = $1 OR meta->>'tx_ref' = $1) LIMIT 1", [c]);
-        if (q3.rows.length) { paymentRow = q3.rows[0]; break; }
-      }
-
-      if (!paymentRow && tx_ref) {
-        const qf = await client.query("SELECT * FROM payments WHERE meta->'provider_init'->>'reference' = $1 LIMIT 1", [tx_ref]);
-        if (qf.rows.length) paymentRow = qf.rows[0];
-      }
-
-      if (!paymentRow) {
-        await client.query('ROLLBACK');
-        console.warn('No matching payment found for verified txn. Candidates:', uniq);
-        return res.status(404).send('Payment verified with provider but matching payment record not found on server.');
-      }
-
-      console.log('Found payment row:', { id: paymentRow.id, order_id: paymentRow.order_id, ad_id: paymentRow.ad_id, status: paymentRow.status });
-
-      if ((paymentRow.status || '').toLowerCase() === 'success' || (paymentRow.status || '').toLowerCase() === 'paid') {
-        await client.query('COMMIT');
-        return res.send(`<h2>Payment already processed</h2><p>Payment id ${paymentRow.id} was already processed.</p>`);
-      }
-// update payments.status to success and append provider verify payload
-      await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['success', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
-
-      // AD finalization: move temp images to cloud/disk, update ads.images
-      if (paymentRow.ad_id) {
-        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]);
-        const meta = paymentRow.meta || {};
-        const tempImgs = (meta && meta.temp_images && Array.isArray(meta.temp_images)) ? meta.temp_images.slice() : [];
-        const finalImages = [];
-
-        for (const t of tempImgs) {
-          if (!t) continue;
-          if (typeof t === 'string' && (t.startsWith('http://') || t.startsWith('https://'))) {
-            finalImages.push(t); continue;
-          }
-          if (cloudinary && typeof t === 'string' && !t.includes('/') && !t.startsWith('tmp-')) {
-            finalImages.push(cloudinaryPublicUrl(t) || t); continue;
-          }
-          if (typeof t === 'string' && t.startsWith('tmp-')) {
-            const tmpPath = path.join(TMP_ADS_DIR, t);
-            if (fs.existsSync(tmpPath)) {
-              if (cloudinary) {
-                try {
-                  const ext = path.extname(tmpPath).toLowerCase();
-                  const resource_type = ['.mp4','.mov','.webm','.ogg'].includes(ext) ? 'video' : 'image';
-                  const uploadRes = await cloudinary.uploader.upload(tmpPath, {
-                    folder: resource_type === 'video' ? 'tradehive/ads/videos' : 'tradehive/ads/images',
-                    resource_type,
-                    type: 'upload',
-                    public_id: `ad-${Date.now()}-${Math.floor(Math.random()*90000)}`
-                  });
-                  if (uploadRes && uploadRes.secure_url) finalImages.push(uploadRes.secure_url);
-                  else if (uploadRes && uploadRes.public_id) finalImages.push(cloudinaryPublicUrl(uploadRes.public_id) || uploadRes.public_id);
-                } catch (ue) {
-                  console.warn('cloudinary upload failed for', tmpPath, ue && ue.message ? ue.message : ue);
-                  finalImages.push(`${req.protocol}://${req.get('host')}/uploads/tmp_ads/${t}`);
-                }
-              } else {
-                finalImages.push(`${req.protocol}://${req.get('host')}/uploads/tmp_ads/${t}`);
-              }
-              try { fs.unlinkSync(tmpPath); } catch(e){ /* ignore */ }
-            } else {
-              console.warn('tmp image file not found', tmpPath);
-            }
-            continue;
-          }
-          finalImages.push(t);
-        }
-
-        if (finalImages.length) {
-          await client.query('UPDATE ads SET images=$1, updated_at=now() WHERE id=$2', [finalImages, paymentRow.ad_id]);
-        }
-
-        const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
-        if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${paymentRow.ad_id} fee was received; admin will review.` });
-        if (process.env.ADMIN_EMAIL) await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${paymentRow.ad_id} paid and requires review.` });
-      }
-
-      // ORDER finalization
-      if (paymentRow.order_id) {
-        await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', paymentRow.order_id]);
-        const order = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [paymentRow.order_id])).rows[0];
-        if (order) {
-          const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [order.seller_id])).rows[0];
-          const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [order.buyer_id])).rows[0];
-          if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Order ${paymentRow.order_id} has been paid`, text: `Order ${paymentRow.order_id} was paid. Qty: ${order.qty}. Amount: ${order.amount}.` });
-          if (buyer) await sendEmail({ to: buyer.email || buyer.username, subject: `Payment received for order ${paymentRow.order_id}`, text: `We received your payment for order ${paymentRow.order_id}.` });
-        }
-      }
-
-      await client.query('COMMIT');
-
-      // Build redirect
-      const FRONTEND_BASE = process.env.FRONTEND_BASE || '';
-      let redirectTo = '';
-      if (paymentRow.order_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/myorders.html' : '/myorders.html';
-      else if (paymentRow.ad_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/ads.html' : '/ads.html';
-      else redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/' : '/';
-
-      const params = new URLSearchParams();
-      params.set('payment', 'success');
-      params.set('pid', String(paymentRow.id));
-      if (paymentRow.ad_id) params.set('ad', String(paymentRow.ad_id));
-      if (paymentRow.order_id) params.set('order', String(paymentRow.order_id));
-      const finalUrl = redirectTo + '?' + params.toString();
-
-      try { return res.redirect(302, finalUrl); }
-      catch (e) {
-        console.warn('Redirect failed, returning HTML link', e && e.message ? e.message : e);
-        return res.send(`<h2>Payment verified and processed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue</a></p>`);
-      }
-    } finally { client.release(); }
-
-  } catch (err) {
-    console.error('verifyAndProcessProviderPayment error', err && err.stack ? err.stack : err);
-    return res.status(500).send('Error processing verification');
-  }
-}
-
-// Route wrappers (use the same endpoints you had)
-app.get('/pay/ad-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
-app.get('/pay/order-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
-
-/////////////////////////////////////////////////////////////////////
-// Webhooks (paystack, flutterwave, stripe)
-/////////////////////////////////////////////////////////////////////
-app.post('/webhook/paystack', express.json({ limit:'1mb' }), async (req, res) => {
-  try {
-    if (process.env.PAYSTACK_SECRET_KEY && !verifyPaystackSignature(req)) {
-      console.warn('Paystack signature mismatch');
-      return res.status(400).send('invalid signature');
-    }
-    const b = req.body || {};
-    const data = b.data || {};
-    const reference = data.reference || data.id || null;
-    const client = await pool.connect();
-    try {
-      if (!reference) return res.status(200).send('ok');
-      const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [reference]);
-      if (!pq.rows.length) return res.status(200).send('ok');
-      const payment = pq.rows[0];
-      if ((payment.status || '').toLowerCase() === 'success') return res.status(200).send('ok');
-      if (data.status === 'success' || String(data.gateway_response || '').toLowerCase().includes('approved')) {
-        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), payment.id]);
-        if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
-        if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
-      }
-      return res.status(200).send('ok');
-    } finally { client.release(); }
-  } catch (err) { console.error('Paystack webhook error', err); res.status(500).send('error'); }
-});
-
-app.post('/webhook/flutterwave', express.json({ limit:'1mb' }), async (req, res) => {
-  try {
-    const header = req.headers['verif-hash'] || req.headers['verif_hash'] || req.headers['x-verif-hash'];
-    if (process.env.FLUTTERWAVE_WEBHOOK_SECRET && header !== process.env.FLUTTERWAVE_WEBHOOK_SECRET) {
-      console.warn('Flutterwave webhook signature mismatch');
-      return res.status(400).send('invalid signature');
-    }
-    const b = req.body || {};
-    const data = b.data || {};
-    const ref = data.tx_ref || data.flw_ref || data.reference;
-    const client = await pool.connect();
-    try {
-      let p = null;
-      if (ref) {
-        const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [ref]);
-        if (pq.rows.length) p = pq.rows[0];
-      }
-      if (!p && data.meta && data.meta.orderId) {
-        const pq2 = await client.query("SELECT * FROM payments WHERE meta->>'orderId' = $1 LIMIT 1", [String(data.meta.orderId)]);
-        if (pq2.rows.length) p = pq2.rows[0];
-      }
-      if (p && (String(data.status).toLowerCase() === 'successful' || String(data.status).toLowerCase() === 'success')) {
-        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), p.id]);
-        if (p.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', p.ad_id]);
-        if (p.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', p.order_id]);
-      } else {
-        console.log('flutterwave webhook: not success or not matched', data.status);
-      }
-      return res.status(200).send('ok');
-    } finally { client.release(); }
-  } catch (e) { console.error('Flutterwave webhook error', e); res.status(500).send('error'); }
-});
-
-app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  if (!stripeLib || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('stripe not configured');
-  try {
-    const sig = req.headers['stripe-signature'];
-    const event = stripeLib.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    if (!event) return res.status(400).send('invalid event');
-    const type = event.type;
-    if (type === 'checkout.session.completed' || type === 'payment_intent.succeeded') {
-      const session = event.data.object;
-      const client = await pool.connect();
-      try {
-        let payment = null;
-        const metadata = session.metadata || {};
-        if (metadata.paymentId) {
-          const pq = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [metadata.paymentId]);
-          if (pq.rows.length) payment = pq.rows[0];
-        }
-        if (!payment && metadata.orderId) {
-          const pq2 = await client.query('SELECT * FROM payments WHERE order_id=$1 LIMIT 1', [metadata.orderId]);
-          if (pq2.rows.length) payment = pq2.rows[0];
-        }
-        if (!payment) {
-          const pq3 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [session.id]);
-          if (pq3.rows.length) payment = pq3.rows[0];
-        }
-        if (payment) {
-          await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: session }), payment.id]);
-          if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
-          if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
-        }
-      } finally { client.release(); }
-    }
-    res.json({ received: true });
-  } catch (err) { console.error('Stripe webhook error', err); res.status(400).send(`Webhook Error: ${err.message}`); }
-});
-/////////////////////////////////////////////////////////////////////
-// Admin endpoints for ads verification (approve/decline)
-/////////////////////////////////////////////////////////////////////
-app.get('/admin/ads/pending', adminAuth, async (req,res) => {
-  try {
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.status=$1 ORDER BY created_at DESC', ['pending_verification']);
-      return res.json({ success:true, ads: r.rows });
-    } finally { client.release(); }
-  } catch(e){ console.error('admin list pending', e); res.status(500).json({ success:false }); }
-});
-
-app.post('/admin/ads/:id/approve', adminAuth, async (req,res) => {
-  try {
-    const id = req.params.id;
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['live', id]);
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
-      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` });
-      return res.json({ success:true, message:'approved' });
-    } finally { client.release(); }
-  } catch (e){ console.error('admin approve', e); res.status(500).json({ success:false }); }
-});
-
-app.post('/admin/ads/:id/decline', adminAuth, async (req,res) => {
-  try {
-    const id = req.params.id;
-    const { reason } = req.body || {};
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['removed', id]);
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
-      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason || 'No reason provided'}` });
-      return res.json({ success:true, message:'declined' });
-    } finally { client.release(); }
-  } catch (e){ console.error('admin decline', e); res.status(500).json({ success:false }); }
-});
-
-/////////////////////////////////////////////////////////////////////
-// User endpoints (profile, online toggle with geolocation, bank, my ads, patch ad status)
-/////////////////////////////////////////////////////////////////////
-// Get user safe profile
-app.get('/api/users/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const client = await pool.connect();
-    try {
-      const q = await client.query('SELECT id, role, email, phone, fullname, username, city, kyc_status, avatar_url, account_details, online, created_at FROM users WHERE id=$1 LIMIT 1', [id]);
-      if (!q.rows.length) return res.status(404).json({ success:false, message:'user-not-found' });
-      return res.json({ success:true, user: q.rows[0] });
-    } finally { client.release(); }
-  } catch (err) { console.error('/api/users/:id', err); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-// Toggle online/offline with geolocation
-app.post('/api/users/:id/online', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { online } = req.body || {};
-    const lat = req.body.lat || null;
-    const lng = req.body.lng || null;
-    if (typeof online === 'undefined') return res.status(400).json({ success:false, message:'online boolean required' });
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (lat !== null && lng !== null) {
-        await client.query(`UPDATE users SET account_details = coalesce(account_details, '{}'::jsonb) || jsonb_build_object('last_lat', $1, 'last_lng', $2), online = $3 WHERE id=$4`, [String(lat), String(lng), online, id]);
-      } else {
-        await client.query(`UPDATE users SET online = $1 WHERE id=$2`, [online, id]);
-      }
-      if (!online) await client.query(`UPDATE ads SET status='offline', updated_at=now() WHERE seller_id=$1 AND status='live'`, [id]);
-      else await client.query(`UPDATE ads SET status='live', updated_at=now() WHERE seller_id=$1 AND status='offline'`, [id]);
-      await client.query('COMMIT');
-      return res.json({ success:true, message: `online set to ${online}` });
-    } finally { client.release(); }
-  } catch (err) { console.error('/api/users/:id/online', err); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-// Save bank / payout details
-app.post('/api/users/:id/bank', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { account_number, bank_code, name, recipient_code, beneficiary_id, connect_account_id } = req.body || {};
-    if (!account_number || !bank_code || !name) return res.status(400).json({ success:false, message:'account_number, bank_code and name required' });
-
-    const client = await pool.connect();
-    try {
-      const details = { account_number: String(account_number), bank_code: String(bank_code), name: String(name) };
-      if (recipient_code) details.recipient_code = String(recipient_code);
-      if (beneficiary_id) details.beneficiary_id = String(beneficiary_id);
-      if (connect_account_id) details.connect_account_id = String(connect_account_id);
-      await client.query('UPDATE users SET account_details = coalesce(account_details, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify(details), id]);
-      return res.json({ success:true, message:'bank details saved' });
-    } finally { client.release(); }
-  } catch (err) { console.error('/api/users/:id/bank', err); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-// Get seller ads for dashboard
-app.get('/api/my/ads', async (req, res) => {
-  try {
-    const userId = req.query.user_id || req.query.user || null;
-    if (!userId) return res.status(400).json({ success:false, message:'user_id required' });
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE seller_id=$1 ORDER BY created_at DESC', [userId]);
-      return res.json({ success:true, ads: r.rows });
-    } finally { client.release(); }
-  } catch (err) { console.error('/api/my/ads', err); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-// Patch ad status
-app.patch('/api/ads/:id/status', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { status } = req.body || {};
-    if (!status) return res.status(400).json({ success:false, message:'status required' });
-    const allowed = ['live','offline','removed','pending_verification','draft','expired','pending_payment'];
-    if (!allowed.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
-    const client = await pool.connect();
-    try {
-      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [status, id]);
-      return res.json({ success:true, message:'status-updated' });
-    } finally { client.release(); }
-  } catch (err) { console.error('PATCH /api/ads/:id/status', err); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-/////////////////////////////////////////////////////////////////////
-// Orders release & confirm routes (unchanged)
-/////////////////////////////////////////////////////////////////////
-app.post('/api/orders/:id/release', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const client = await pool.connect();
-    try {
-      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
-      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
-      if (or.status !== 'paid') return res.status(400).json({ success:false, message:'order-not-paid' });
-
-      await client.query('UPDATE orders SET status=$1, released_at=now(), release_followup_stage=0, updated_at=now() WHERE id=$2', ['released', orderId]);
-
-      const now = new Date();
-      const day1 = addWorkingDays(now, 1);
-      const day2 = addWorkingDays(now, 2);
-      const day3 = addWorkingDays(now, 3);
-      const day4 = addWorkingDays(now, 4);
-
-      await scheduleJobAt('order-followup', { orderId, stage:1 }, day1);
-      await scheduleJobAt('order-followup', { orderId, stage:2 }, day2);
-      await scheduleJobAt('order-followup', { orderId, stage:3 }, day3);
-      await scheduleJobAt('order-followup', { orderId, stage:4 }, day4);
-
-      const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.buyer_id])).rows[0];
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
-      if (buyer) await sendEmail({ to: buyer.email || buyer.username, subject: `Seller released order ${orderId}`, text: `Seller released order ${orderId}. Please confirm receipt.` });
-      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `You released order ${orderId}`, text: `You released order ${orderId}. Await buyer confirmation.` });
-
-      return res.json({ success:true, message:'order released, followups scheduled (working days)' });
-    } finally { client.release(); }
-  } catch (e) { console.error('/api/orders/:id/release', e); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-
-app.post('/api/orders/:id/confirm', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const client = await pool.connect();
-    try {
-      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
-      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
-      if (or.status !== 'released') return res.status(400).json({ success:false, message:'order-not-released' });
-
-      await client.query('UPDATE orders SET status=$1, buyer_confirmed_at=now(), updated_at=now() WHERE id=$2', ['completed', orderId]);
-
-      const pay = (await client.query('SELECT * FROM payments WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1', [orderId])).rows[0];
-      const settlementDays = (function getSettlementDays(meta){
-        if (!meta) return 2;
-        try {
-          const m = typeof meta === 'string' ? JSON.parse(meta) : meta;
-          if (m.provider_verify && m.provider_verify.data) {
-            const p = m.provider_verify.data;
-            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
-            if (pt.includes('card')) return 6;
-          }
-          if (m.provider_init && m.provider_init.data) {
-            const p = m.provider_init.data;
-            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
-            if (pt.includes('card')) return 6;
-          }
-          return 2;
-        } catch(e){ return 2; }
-      })(pay ? pay.meta : null);
-
-      const payoutDate = addWorkingDays(new Date(), settlementDays);
-      await scheduleJobAt('payout-seller', { orderId }, payoutDate);
-
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
-      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Buyer confirmed receipt for ${orderId}`, text: `Buyer confirmed. Payout scheduled in ${settlementDays} working day(s) (on ${payoutDate.toDateString()}).` });
-
-      return res.json({ success:true, message:`Order completed; payout scheduled in ${settlementDays} working day(s).` });
-    } finally { client.release(); }
-  } catch (e) { console.error('/api/orders/:id/confirm', e); return res.status(500).json({ success:false, message:'server-error' }); }
-});
-/////////////////////////////////////////////////////////////////////
-// Health & graceful shutdown
-/////////////////////////////////////////////////////////////////////
-app.get('/health', (req,res) => res.json({ ok:true, now: new Date().toISOString() }));
-
-const server = app.listen(PORT, ()=> console.log(`TradeHive backend listening on ${PORT}`));
-
-async function shutdown() {
-  console.log('Shutting down...');
-  try {
-    if (jobWorker) { await jobWorker.close(); console.log('job worker closed'); }
-    if (jobQueue) { await jobQueue.close(); console.log('job queue closed'); }
-    if (redis) { redis.disconnect(); console.log('redis disconnected'); }
-    server.close(()=> { console.log('HTTP server closed'); process.exit(0); });
-  } catch(e){ console.error('shutdown error', e); process.exit(1); }
-}
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
