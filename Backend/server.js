@@ -426,102 +426,109 @@ if (jobQueue) {
 /////////////////////////////////////////////////////////////////////
 // Payment provider helpers
 /////////////////////////////////////////////////////////////////////
+// ---------- 1) Updated initializePayment (sanitizes metadata) ----------
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
 
+/**
+ * sanitizeMetadata(obj)
+ * - returns a flat object containing only string/number/boolean primitives
+ * - strips null/undefined/arrays/objects
+ * - truncates long strings to 500 chars (adjust limit if needed)
+ */
+function sanitizeMetadata(obj = {}) {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  const maxLen = 500;
+  for (const k of Object.keys(obj)) {
+    try {
+      const v = obj[k];
+      if (v === null || typeof v === 'undefined') continue;
+      const t = typeof v;
+      if (t === 'string' || t === 'number' || t === 'boolean') {
+        const sval = String(v);
+        out[String(k)] = sval.length > maxLen ? sval.slice(0, maxLen) : sval;
+      } else {
+        // skip arrays/objects to avoid provider "invalid metadata" errors
+        continue;
+      }
+    } catch (e) {
+      // ignore problematic key
+      continue;
+    }
+  }
+  return out;
+}
+
 async function initializePayment({ provider = PAYMENT_PROVIDER, email, amount, currency = 'NGN', metadata = {}, callback_url }) {
+  // ensure provider exists
+  provider = (provider || PAYMENT_PROVIDER || '').toString().toLowerCase();
+
+  // sanitize metadata to a flat primitive-only object
+  const safeMetadata = sanitizeMetadata(metadata || {});
+  // also include a minimal tx_ref/email if present
+  if (metadata && metadata.tx_ref && !safeMetadata.tx_ref) safeMetadata.tx_ref = String(metadata.tx_ref);
+  if (email && !safeMetadata.email) safeMetadata.email = String(email);
+
   if (provider === 'paystack') {
     const key = process.env.PAYSTACK_SECRET_KEY;
     if (!key) throw new Error('PAYSTACK_SECRET_KEY not set');
+    const body = {
+      email,
+      amount: Math.round(Number(amount) * 100),
+      callback_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback',
+      metadata: safeMetadata
+    };
     const res = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, amount: Math.round(Number(amount)*100), callback_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback', metadata })
+      body: JSON.stringify(body)
     });
     return await res.json();
   }
+
   if (provider === 'flutterwave') {
     const key = process.env.FLUTTERWAVE_SECRET_KEY;
     if (!key) throw new Error('FLUTTERWAVE_SECRET_KEY not set');
-    const tx_ref = metadata.tx_ref || ('th_' + uid());
-    const requestBody = { tx_ref, amount: String(amount), currency, redirect_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback', customer: { email: metadata.email || email, phonenumber: metadata.phone || '' }, meta: metadata };
-    const res = await fetch('https://api.flutterwave.com/v3/payments', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify(requestBody) });
+    const tx_ref = safeMetadata.tx_ref || metadata.tx_ref || ('th_' + uid());
+    // build request body with sanitized meta under `meta`
+    const requestBody = {
+      tx_ref,
+      amount: String(amount),
+      currency,
+      redirect_url: callback_url || (process.env.CALLBACK_BASE_URL || '') + '/pay/callback',
+      customer: { email: safeMetadata.email || email || '', phonenumber: safeMetadata.phone || '' },
+      meta: safeMetadata
+    };
+    const res = await fetch('https://api.flutterwave.com/v3/payments', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
     return await res.json();
   }
+
   if (provider === 'stripe') {
     if (!stripeLib) throw new Error('Stripe not configured');
     const session = await stripeLib.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
-      line_items: [{ price_data: { currency, product_data: { name: metadata.title || 'TradeHive' }, unit_amount: Math.round(Number(amount)*100) }, quantity: 1 }],
+      line_items: [{
+        price_data: {
+          currency,
+          product_data: { name: safeMetadata.title || 'TradeHive' },
+          unit_amount: Math.round(Number(amount) * 100)
+        },
+        quantity: 1
+      }],
       success_url: (process.env.CALLBACK_BASE_URL || '') + '/pay/success?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: (process.env.CALLBACK_BASE_URL || '') + '/pay/cancel'
+      cancel_url: (process.env.CALLBACK_BASE_URL || '') + '/pay/cancel',
+      metadata: safeMetadata
     });
-    return { ok:true, url: session.url, session };
+    return { ok: true, url: session.url, session };
   }
-  return { ok:true, url: callback_url || '/', message:'provider-not-configured' };
+
+  return { ok: true, url: callback_url || '/', message: 'provider-not-configured' };
 }
-
-function verifyPaystackSignature(req) {
-  const secret = process.env.PAYSTACK_SECRET_KEY;
-  if (!secret) return true;
-  const sig = req.headers['x-paystack-signature'];
-  const payload = JSON.stringify(req.body || {});
-  const hash = crypto.createHmac('sha512', secret).update(payload).digest('hex');
-  return hash === sig;
-}
-
-async function payoutSeller({ seller, amount, currency='NGN', metadata={} }) {
-  if (!seller || !seller.account_details) return { ok:false, message:'seller-account-details-missing' };
-  const details = seller.account_details;
-  const provider = PAYMENT_PROVIDER;
-  try {
-    if (provider === 'paystack') {
-      const key = process.env.PAYSTACK_SECRET_KEY; if (!key) return { ok:false, message:'PAYSTACK_SECRET_KEY not set' };
-      let recipient_code = details.recipient_code;
-      if (!recipient_code) {
-        const createRes = await fetch('https://api.paystack.co/transferrecipient', { method:'POST', headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify({ type:'nuban', name: details.name || seller.fullname || seller.username, account_number: details.account_number, bank_code: details.bank_code, currency }) });
-        const cr = await createRes.json();
-        if (!cr.status) return { ok:false, message:'failed-create-recipient', raw:cr };
-        recipient_code = cr.data.recipient_code;
-        try { const c = await pool.connect(); await c.query('UPDATE users SET account_details = jsonb_set(coalesce(account_details, {}::jsonb), \'{recipient_code}\', to_jsonb($1::text), true) WHERE id=$2', [recipient_code, seller.id]); c.release(); } catch(e){ console.warn('persist recipient failed', e); }
-      }
-      const amount_kobo = Math.round(Number(amount) * 100);
-      const transferRes = await fetch('https://api.paystack.co/transfer', { method:'POST', headers: { Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify({ source:'balance', amount: amount_kobo, recipient: recipient_code, reason: metadata && metadata.orderId ? `Payout for order ${metadata.orderId}` : 'TradeHive payout' }) });
-      const tr = await transferRes.json();
-      if (!tr.status) return { ok:false, message:'transfer_failed', raw:tr };
-      return { ok:true, reference: tr.data.transfer_code || tr.data.reference, raw: tr };
-    }
-
-    if (provider === 'flutterwave') {
-      const key = process.env.FLUTTERWAVE_SECRET_KEY; if (!key) return { ok:false, message:'FLUTTERWAVE_SECRET_KEY not set' };
-      let beneficiary_id = details.beneficiary_id;
-      if (!beneficiary_id) {
-        const createBenef = await fetch('https://api.flutterwave.com/v3/beneficiaries', { method:'POST', headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify({ account_number: details.account_number, account_bank: details.bank_code, fullname: details.name || seller.fullname || seller.username }) });
-        const cb = await createBenef.json();
-        if (!cb.status) return { ok:false, message:'failed-create-beneficiary', raw:cb };
-        beneficiary_id = cb.data.id;
-        try { const c = await pool.connect(); await c.query('UPDATE users SET account_details = jsonb_set(coalesce(account_details, {}::jsonb), \'{beneficiary_id}\', to_jsonb($1::text), true) WHERE id=$2', [String(beneficiary_id), seller.id]); c.release(); } catch(e){ console.warn('persist beneficiary failed', e); }
-      }
-      const trRes = await fetch('https://api.flutterwave.com/v3/transfers', { method:'POST', headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' }, body: JSON.stringify({ account_bank: details.bank_code, account_number: details.account_number, amount: String(amount), narration: metadata && metadata.orderId ? `Payout for order ${metadata.orderId}` : 'TradeHive payout', currency, reference: 'th_' + uid() }) });
-      const tr = await trRes.json();
-      if (!(tr && (tr.status === 'success' || tr.status === true))) return { ok:false, message:'transfer_failed', raw:tr };
-      return { ok:true, reference: tr.data && (tr.data.id || tr.data.reference), raw: tr };
-    }
-
-    if (provider === 'stripe' && stripeLib) {
-      const connectId = details.connect_account_id;
-      if (!connectId) return { ok:false, message:'stripe-connect-id-missing' };
-      const transferObj = await stripeLib.transfers.create({ amount: Math.round(Number(amount) * 100), currency, destination: connectId, description: 'TradeHive payout' });
-      return { ok:true, reference: transferObj.id, raw: transferObj };
-    }
-
-    return { ok:true, reference: 'sim-' + uid() };
-  } catch (err) {
-    console.error('payoutSeller error', err);
-    return { ok:false, message:'exception', error: err && err.message, raw: err };
-  }
-}
-
 /////////////////////////////////////////////////////////////////////
 // Helper: fileUrlFromMulterFile - read file info from multer/cloudinary file object
 //////////////////////////////////////////////////////////
