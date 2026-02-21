@@ -115,34 +115,6 @@ try {
   diskAdsUpload = multer({ storage: diskStorage, limits: { fileSize: 100 * 1024 * 1024 } });
 }
 
-// Utility: signed URL builder for authenticated KYC resources
-function cloudinarySignedUrl(public_id, opts = {}) {
-  if (!cloudinary || !public_id) return null;
-  try {
-    return cloudinary.url(public_id, { sign_url: true, secure: true, type: 'authenticated', resource_type: opts.resource_type || 'image', ...opts });
-  } catch(e) {
-    console.error('cloudinarySignedUrl error', e && e.message ? e.message : e);
-    return null;
-  }
-}
-
-/*
-Usage examples:
-
-// KYC route (authenticated/private)
-app.post('/api/kyc/submit', uploadCloud.fields([
-  { name: 'id_images', maxCount: 6 },
-  { name: 'selfie', maxCount: 1 }
-]), async (req, res) => {
-  // req.files contains authenticated uploads; store public_ids (or file.path) in DB
-});
-
-// Ads route (public)
-app.post('/api/ads', uploadAds.array('images', 6), async (req, res) => {
-  // req.files contains public uploads. Each file usually has file.path or file.location depending on multer-storage-cloudinary version.
-  // Save file.path (URL) or public_id to ads.images in DB.
-});
-*/
 
 /////////////////////////////////////////////////////////////////////
 // Express setup
