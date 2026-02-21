@@ -965,45 +965,107 @@ app.post('/api/ads/:id/buy', async (req, res) => {
 // This function now finalizes ad images: uploads tmp files to Cloudinary (public),
 // updates ads.images after payment success, deletes temp files, and redirects buyer/seller appropriately.
 /////////////////////////////////////////////////////////////////////
-async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery }, res) {
+// REPLACE your existing verifyAndProcessProviderPayment + /pay/ad-callback and /pay/order-callback
+// with the code below.
+
+// Note: this implementation expects `cloudinary`, `cloudinaryPublicUrl`, `TMP_ADS_DIR`, `pool`, etc.
+// to be defined elsewhere in your server.js (as in your backend). It only replaces the function + routes.
+
+async function verifyAndProcessProviderPayment(req, res) {
+  // Accept req so we can build URLs and read query params safely.
   try {
-    if (!provider) provider = PAYMENT_PROVIDER;
+    // read query params robustly
+    const rawQuery = req.query || {};
+    const provider = (rawQuery.provider || process.env.PAYMENT_PROVIDER || 'paystack').toString().toLowerCase();
+    const tx_ref = rawQuery.tx_ref || rawQuery.txref || rawQuery.txReference || rawQuery.reference || rawQuery.tx || null;
+    let transaction_id = rawQuery.transaction_id || rawQuery.transactionId || rawQuery.transaction || rawQuery.id || null;
+
     let verifyResp = null;
 
+    // VERIFY with provider
     if (provider === 'flutterwave') {
-      if (!process.env.FLUTTERWAVE_SECRET_KEY) return res.send('Flutterwave not configured on server.');
-      if (!transaction_id) return res.send('Transaction id required.');
-      const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`, 'Content-Type':'application/json' }});
+      if (!process.env.FLUTTERWAVE_SECRET_KEY) {
+        console.warn('Flutterwave not configured on server.');
+        return res.status(500).send('Flutterwave not configured on server.');
+      }
+
+      // Flutterwave normally appends transaction_id on redirect; if it's missing, try to find candidate payment
+      if (!transaction_id && tx_ref) {
+        // try to extract transaction_id from payments.meta.provider_init (if present)
+        try {
+          const c = await pool.connect();
+          try {
+            const q = await c.query("SELECT meta FROM payments WHERE meta->>'tx_ref' = $1 OR reference = $1 LIMIT 1", [String(tx_ref)]);
+            if (q.rows.length && q.rows[0].meta) {
+              const m = q.rows[0].meta;
+              // provider init may be in m.provider_init.data.id or .flw_ref etc
+              if (m.provider_init && (m.provider_init.data && (m.provider_init.data.id || m.provider_init.data.flw_ref))) {
+                transaction_id = m.provider_init.data.id || m.provider_init.data.flw_ref || transaction_id;
+              }
+              if (!transaction_id && m.provider_init && (m.provider_init.reference || m.provider_init.id)) {
+                transaction_id = m.provider_init.reference || m.provider_init.id;
+              }
+            }
+          } finally { c.release(); }
+        } catch (e) {
+          console.warn('While attempting to find fallback transaction_id by tx_ref:', e && e.message ? e.message : e);
+        }
+      }
+
+      if (!transaction_id) {
+        // still missing -> fail with clear message
+        console.warn('Flutterwave callback: transaction_id missing (and not discoverable from payments). Query:', rawQuery);
+        return res.status(400).send('Transaction id required for Flutterwave verification.');
+      }
+
+      // call flutterwave verify endpoint
+      const r = await fetch(`https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`, {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
       verifyResp = await r.json();
       if (!(verifyResp && verifyResp.status === 'success' && verifyResp.data && (verifyResp.data.status === 'successful' || verifyResp.data.status === 'success'))) {
-        console.log('Flutterwave verify failed', verifyResp);
-        return res.send('Flutterwave verification failed.');
+        console.warn('Flutterwave verify failed', verifyResp);
+        return res.status(400).send('Flutterwave verification failed.');
       }
     } else if (provider === 'paystack') {
-      if (!process.env.PAYSTACK_SECRET_KEY) return res.send('Paystack not configured on server.');
+      if (!process.env.PAYSTACK_SECRET_KEY) {
+        console.warn('Paystack not configured on server.');
+        return res.status(500).send('Paystack not configured on server.');
+      }
       const paystackBase = 'https://api.paystack.co';
       const attemptVerify = async (ref) => {
         try {
-          const r = await fetch(`${paystackBase}/transaction/verify/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, 'Content-Type':'application/json' }});
-          const j = await r.json().catch(()=>null);
-          return j;
-        } catch(e){ return null; }
+          const r = await fetch(`${paystackBase}/transaction/verify/${encodeURIComponent(ref)}`, {
+            headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' }
+          });
+          return await r.json().catch(()=>null);
+        } catch (e) { return null; }
       };
+      // try transaction_id first, then tx_ref
       let j = null;
       if (transaction_id) j = await attemptVerify(transaction_id);
       if (!j && tx_ref) j = await attemptVerify(tx_ref);
-      if (!j || !j.status) { console.log('Paystack verify failed', j); return res.send('Paystack verification failed.'); }
+      if (!j || !j.status) {
+        console.warn('Paystack verify failed', j);
+        return res.status(400).send('Paystack verification failed.');
+      }
       verifyResp = j;
     } else if (provider === 'stripe') {
-      // Stripe verification often handled by webhook; here we do minimal handling
+      // stripe - minimal handling (webhooks are preferred)
       verifyResp = { data: rawQuery || {} };
     } else {
-      return res.send('Unsupported provider.');
+      return res.status(400).send('Unsupported provider.');
     }
 
+    // At this point verifyResp should be populated
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // build candidate references from provider response + query
       const candidates = new Set();
       if (verifyResp && verifyResp.data) {
         const d = verifyResp.data;
@@ -1014,18 +1076,24 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
       }
       if (tx_ref) candidates.add(String(tx_ref));
       if (transaction_id) candidates.add(String(transaction_id));
+
       const uniq = Array.from(candidates).filter(Boolean);
 
+      // find matching payment row
       let paymentRow = null;
       for (const c of uniq) {
+        // try reference
         const q1 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [c]);
         if (q1.rows.length) { paymentRow = q1.rows[0]; break; }
+        // try id
         const q2 = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [c]);
         if (q2.rows.length) { paymentRow = q2.rows[0]; break; }
+        // try meta fields
         const q3 = await client.query("SELECT * FROM payments WHERE (meta->>'paymentId' = $1 OR meta->>'orderId' = $1 OR meta->>'adId' = $1 OR meta->>'tx_ref' = $1) LIMIT 1", [c]);
         if (q3.rows.length) { paymentRow = q3.rows[0]; break; }
       }
 
+      // extra fallback: provider_init.reference
       if (!paymentRow && tx_ref) {
         const qf = await client.query("SELECT * FROM payments WHERE meta->'provider_init'->>'reference' = $1 LIMIT 1", [tx_ref]);
         if (qf.rows.length) paymentRow = qf.rows[0];
@@ -1034,18 +1102,23 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
       if (!paymentRow) {
         await client.query('ROLLBACK');
         console.warn('No matching payment found for verified txn. Candidates:', uniq);
-        return res.send('Payment verified with provider but matching payment record not found on server.');
+        return res.status(404).send('Payment verified with provider but matching payment record not found on server.');
       }
 
+      // if already processed
       if ((paymentRow.status || '').toLowerCase() === 'success' || (paymentRow.status || '').toLowerCase() === 'paid') {
         await client.query('COMMIT');
         return res.send(`<h2>Payment already processed</h2><p>Payment id ${paymentRow.id} was already processed.</p>`);
       }
 
-      // mark payment success & append provider verify data
-      await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['success', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
+      // update payment status + append provider verify payload
+      await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", [
+        'success',
+        JSON.stringify({ provider_verify: verifyResp }),
+        paymentRow.id
+      ]);
 
-      // --- AD PAYMENT FINALIZATION: move temp images to cloud and update ads.images ---
+      // --- AD finalization: move temp images to cloud or disk, update ads.images ---
       if (paymentRow.ad_id) {
         await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]);
 
@@ -1053,19 +1126,22 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
         const tempImgs = (meta && meta.temp_images && Array.isArray(meta.temp_images)) ? meta.temp_images.slice() : [];
         const finalImages = [];
 
+        // TMP_ADS_DIR should be defined earlier in your server (where you store temp ad uploads)
         for (const t of tempImgs) {
           if (!t) continue;
-          // if already a full URL
+          // If t is already a full URL
           if (typeof t === 'string' && (t.startsWith('http://') || t.startsWith('https://'))) {
-            finalImages.push(t); continue;
+            finalImages.push(t);
+            continue;
           }
-          // if looks like cloudinary public id and cloudinary available
+          // If looks like Cloudinary public id
           if (cloudinary && typeof t === 'string' && !t.includes('/') && !t.startsWith('tmp-')) {
-            finalImages.push(cloudinaryPublicUrl(t) || t); continue;
+            finalImages.push(cloudinaryPublicUrl(t) || t);
+            continue;
           }
-          // if tmp file
+          // temp file stored locally with tmp- prefix
           if (typeof t === 'string' && t.startsWith('tmp-')) {
-            const tmpPath = path.join(TMP_ADS_DIR, t);
+            const tmpPath = typeof TMP_ADS_DIR === 'string' ? path.join(TMP_ADS_DIR, t) : path.join(process.cwd(), 'uploads', 'tmp_ads', t);
             if (fs.existsSync(tmpPath)) {
               if (cloudinary) {
                 try {
@@ -1077,13 +1153,11 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
                     type: 'upload',
                     public_id: `ad-${Date.now()}-${Math.floor(Math.random()*90000)}`
                   });
-                  if (uploadRes && uploadRes.secure_url) {
-                    finalImages.push(uploadRes.secure_url);
-                  } else if (uploadRes && uploadRes.public_id) {
-                    finalImages.push(cloudinaryPublicUrl(uploadRes.public_id) || uploadRes.public_id);
-                  }
+                  if (uploadRes && uploadRes.secure_url) finalImages.push(uploadRes.secure_url);
+                  else if (uploadRes && uploadRes.public_id) finalImages.push(cloudinaryPublicUrl(uploadRes.public_id) || uploadRes.public_id);
                 } catch (ue) {
                   console.warn('cloudinary upload failed for', tmpPath, ue && ue.message ? ue.message : ue);
+                  // fall back to serving the tmp file via server static route (ensure you expose it)
                   finalImages.push(`${req.protocol}://${req.get('host')}/uploads/tmp_ads/${t}`);
                 }
               } else {
@@ -1093,21 +1167,24 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
             } else {
               console.warn('tmp image file not found', tmpPath);
             }
-          } else {
-            finalImages.push(t);
+            continue;
           }
+
+          // otherwise push as-is
+          finalImages.push(t);
         }
 
         if (finalImages.length) {
           await client.query('UPDATE ads SET images=$1, updated_at=now() WHERE id=$2', [finalImages, paymentRow.ad_id]);
         }
 
+        // notify seller/admin (same as before)
         const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
         if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${paymentRow.ad_id} fee was received; admin will review.` });
         if (process.env.ADMIN_EMAIL) await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${paymentRow.ad_id} paid and requires review.` });
       }
 
-      // --- ORDER PAYMENT FINALIZATION ---
+      // --- ORDER finalization ---
       if (paymentRow.order_id) {
         await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', paymentRow.order_id]);
         const order = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [paymentRow.order_id])).rows[0];
@@ -1121,16 +1198,13 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
 
       await client.query('COMMIT');
 
-      // Build redirect
+      // Build friendly redirect
       const FRONTEND_BASE = process.env.FRONTEND_BASE || '';
       let redirectTo = '';
-      if (paymentRow.order_id) {
-        redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/myorders.html' : '/myorders.html';
-      } else if (paymentRow.ad_id) {
-        redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/ads.html' : '/ads.html';
-      } else {
-        redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/' : '/';
-      }
+      if (paymentRow.order_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/myorders.html' : '/myorders.html';
+      else if (paymentRow.ad_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/ads.html' : '/ads.html';
+      else redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/' : '/';
+
       const params = new URLSearchParams();
       params.set('payment', 'success');
       params.set('pid', String(paymentRow.id));
@@ -1139,26 +1213,22 @@ async function verifyAndProcessProviderPayment({ provider, tx_ref, transaction_i
       const finalUrl = redirectTo + '?' + params.toString();
 
       try { return res.redirect(302, finalUrl); }
-      catch (e) { return res.send(`<h2>Payment verified and processed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue</a></p>`); }
+      catch (e) {
+        console.warn('Redirect failed, returning HTML link', e && e.message ? e.message : e);
+        return res.send(`<h2>Payment verified and processed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue</a></p>`);
+      }
     } finally { client.release(); }
   } catch (err) {
-    console.error('verifyAndProcessProviderPayment error', err);
+    // log the full stack so you can inspect Render logs
+    console.error('verifyAndProcessProviderPayment error', err && err.stack ? err.stack : err);
+    // more helpful response for debug — you can change to a friendlier message in production
     return res.status(500).send('Error processing verification');
   }
 }
 
-app.get('/pay/ad-callback', async (req, res) => {
-  const { status, tx_ref, transaction_id } = req.query || {};
-  const provider = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
-  return verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery: req.query }, res);
-});
-
-app.get('/pay/order-callback', async (req, res) => {
-  const { status, tx_ref, transaction_id } = req.query || {};
-  const provider = (process.env.PAYMENT_PROVIDER || 'paystack').toLowerCase();
-  return verifyAndProcessProviderPayment({ provider, tx_ref, transaction_id, rawQuery: req.query }, res);
-});
-
+// Updated routes that call the function above:
+app.get('/pay/ad-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
+app.get('/pay/order-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
 /////////////////////////////////////////////////////////////////////
 // Webhooks (paystack, flutterwave, stripe)
 /////////////////////////////////////////////////////////////////////
