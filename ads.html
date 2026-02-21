@@ -9,7 +9,7 @@
   :root{
     --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
     --border:rgba(7,16,20,0.06); --gold1:#FFB703; --gold2:#F59E0B;
-    --danger:#d64541;
+    --danger:#d64541; --success:#16a34a; --rejected:#ef4444;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;font-family:Inter, Roboto, Arial, sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
@@ -38,13 +38,17 @@
   .pending { background:#f2f2f2; color:#444; animation:blnk 1.2s infinite; padding:6px 8px; border-radius:999px; font-weight:800 }
   .live { background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; padding:6px 8px; border-radius:999px; font-weight:900; display:inline-flex; gap:8px; align-items:center; }
   .offline { background:#fff;border:1px solid var(--border); color:var(--muted); padding:6px 8px; border-radius:999px; font-weight:800; }
-  .expired { background:#fff;border:1px solid rgba(214,69,65,0.12); color:var(--danger); padding:6px 8px; border-radius:999px; font-weight:900; }
+  .rejected { background: rgba(239,68,68,0.08); color:var(--rejected); padding:6px 8px; border-radius:999px; font-weight:900; border:1px solid rgba(239,68,68,0.12); }
   @keyframes blnk {0%{opacity:1}50%{opacity:0.3}100%{opacity:1}}
   .muted-note{font-size:13px;color:var(--muted)}
   .small-input{padding:6px;border-radius:8px;border:1px solid var(--border)}
   .controls{display:flex;gap:8px;align-items:center;margin-bottom:12px}
   .center{display:flex;justify-content:center;align-items:center}
   .empty{padding:40px;text-align:center;color:var(--muted)}
+  .tabs{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+  .tab{padding:8px 12px;border-radius:999px;border:1px solid var(--border);cursor:pointer;background:#fff;font-weight:800}
+  .tab.active{box-shadow:0 6px 30px rgba(2,6,23,0.04);border:1px solid rgba(0,0,0,0.06)}
+  .top-left{display:flex;gap:8px;align-items:center}
   @media (max-width:980px){
     .ad-media{width:120px;height:90px}
   }
@@ -60,13 +64,26 @@
   <div class="wrap">
     <main class="card" aria-labelledby="adsTitle">
       <div class="top-row">
-        <div>
-          <h1 id="adsTitle" class="title">My Ads — Manager</h1>
-          <div class="small-muted">Track your ads: pending → live → expired. Re-awake or delete ads below.</div>
+        <div class="top-left">
+          <!-- Back button to dashboard.html -->
+          <a href="/dashboard.html" class="btn view" style="margin-right:8px">← Back</a>
+          <div>
+            <h1 id="adsTitle" class="title">My Ads — Manager</h1>
+            <div class="small-muted">Track your ads: pending → live → rejected. Re-awake or delete ads below.</div>
+          </div>
         </div>
-        <div class="controls">
-          <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
-          <button id="refreshBtn" class="btn view">Refresh</button>
+
+        <div style="display:flex;flex-direction:column;align-items:flex-end;">
+          <div class="controls" style="margin-bottom:8px">
+            <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
+            <button id="refreshBtn" class="btn view">Refresh</button>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Ad status filters">
+            <div class="tab active" data-filter="all">All</div>
+            <div class="tab" data-filter="pending">Pending</div>
+            <div class="tab" data-filter="live">Live</div>
+            <div class="tab" data-filter="rejected">Rejected</div>
+          </div>
         </div>
       </div>
 
@@ -97,36 +114,61 @@ const adsGrid = document.getElementById('adsGrid');
 const emptyEl = document.getElementById('empty');
 const refreshBtn = document.getElementById('refreshBtn');
 const searchQ = document.getElementById('searchQ');
+const tabEls = Array.from(document.querySelectorAll('.tab'));
+
+let currentFilter = 'all'; // all | pending | live | rejected
 
 refreshBtn.addEventListener('click', ()=> loadAds());
+searchQ.addEventListener('input', debounce(()=> renderAds(lastAdsCache), 250));
+
+tabEls.forEach(t => t.addEventListener('click', (ev)=>{
+  tabEls.forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  currentFilter = t.getAttribute('data-filter') || 'all';
+  loadAds();
+}));
+
+// debounce helper
+function debounce(fn, ms=200){ let to; return (...a)=>{ clearTimeout(to); to = setTimeout(()=>fn(...a), ms); }; }
+
+let lastAdsCache = [];
 
 async function loadAds(){
   const u = readUser();
-  if (!u || !u.id) {
-    // if user not signed in, show message
-    adsGrid.innerHTML = '';
-    emptyEl.style.display = 'block';
-    emptyEl.textContent = 'Sign in to manage your ads.';
-    return;
-  }
   adsGrid.innerHTML = '<div style="grid-column:1/-1" class="center muted-note">Loading...</div>';
+  // Build URL depending on whether there's a signed-in user or not.
   try {
-    const res = await fetch(BACKEND_BASE + '/api/my/ads?user_id=' + encodeURIComponent(u.id), { credentials: 'include' });
+    let url;
+    const statusMap = { pending: 'pending_verification', live: 'live', rejected: 'removed' };
+    if (u && u.id) {
+      // my ads endpoint (returns all my ads)
+      url = `${BACKEND_BASE}/api/my/ads?user_id=${encodeURIComponent(u.id)}`;
+    } else {
+      // show public ads endpoint; filter by status if not 'all'
+      if (currentFilter === 'all') url = `${BACKEND_BASE}/api/ads`;
+      else url = `${BACKEND_BASE}/api/ads?status=${encodeURIComponent(statusMap[currentFilter] || currentFilter)}`;
+    }
+
+    const res = await fetch(url, { credentials: 'include' });
     const json = await res.json().catch(()=>null);
+
     if (!res.ok || !json || !json.success) {
       // fallback to empty
       adsGrid.innerHTML = '';
       emptyEl.style.display = 'block';
       emptyEl.textContent = 'No ads found or server unreachable.';
+      lastAdsCache = [];
       return;
     }
     const ads = Array.isArray(json.ads) ? json.ads : [];
+    lastAdsCache = ads;
     renderAds(ads);
   } catch (e) {
     console.error('loadAds', e);
     adsGrid.innerHTML = '';
     emptyEl.style.display = 'block';
     emptyEl.textContent = 'Network error fetching ads.';
+    lastAdsCache = [];
   }
 }
 
@@ -154,13 +196,20 @@ function statusHtml(status, createdAtIso) {
   if (st === 'offline') {
     return `<div class="offline">Offline</div>`;
   }
-  if (st === 'removed') {
-    return `<div style="padding:6px 8px;border-radius:999px;background:#fff;border:1px solid var(--border);color:var(--muted);font-weight:800">Removed</div>`;
+  if (st === 'removed' || st === 'declined' || st === 'rejected') {
+    return `<div class="rejected">● Rejected</div>`;
   }
   if (isExpired(createdAtIso)) {
-    return `<div class="expired">EXPIRED</div>`;
+    return `<div class="rejected">EXPIRED</div>`;
   }
   return `<div class="badge">${escapeHtml(String(status||'draft').toUpperCase())}</div>`;
+}
+
+function imageForAd(ad) {
+  const img = (Array.isArray(ad.images) && ad.images.length) ? ad.images[0] : (ad.image || '');
+  // fallback placeholder if empty or broken
+  if (!img) return 'https://i.postimg.cc/hv4h8YSs/placeholder.png';
+  return img;
 }
 
 function renderAds(ads){
@@ -172,17 +221,31 @@ function renderAds(ads){
   }
   emptyEl.style.display = 'none';
   const q = (searchQ.value || '').trim().toLowerCase();
-  ads.filter(a=>{
+  const filtered = ads.filter(a=>{
     if (!q) return true;
     return (String(a.title||'') + ' ' + String(a.location||'') + ' ' + String(a.description||'')).toLowerCase().includes(q);
-  }).forEach(ad=>{
+  }).filter(a=>{
+    if (currentFilter === 'all') return true;
+    if (currentFilter === 'pending') return ['pending','pending_verification','pending_payment'].includes((a.status||'').toLowerCase());
+    if (currentFilter === 'live') return ['live','active'].includes((a.status||'').toLowerCase());
+    if (currentFilter === 'rejected') return ['removed','declined','rejected'].includes((a.status||'').toLowerCase()) || isExpired(a.created_at);
+    return true;
+  });
+
+  if (!filtered.length) {
+    emptyEl.style.display = 'block';
+    emptyEl.textContent = 'No ads match your filter.';
+    return;
+  }
+
+  filtered.forEach(ad=>{
     const expired = isExpired(ad.created_at);
     const status = expired ? 'expired' : (ad.status || 'draft');
     const el = document.createElement('div');
     el.className = 'ad-card';
-    const img = (Array.isArray(ad.images) && ad.images.length) ? ad.images[0] : (ad.image || '');
+    const img = imageForAd(ad);
     el.innerHTML = `
-      <div class="ad-media"><img src="${escapeHtml(img)}" alt=""></div>
+      <div class="ad-media"><img src="${escapeHtml(img)}" alt="" onerror="this.src='https://i.postimg.cc/hv4h8YSs/placeholder.png'"></div>
       <div class="ad-body">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="flex:1">
@@ -198,8 +261,8 @@ function renderAds(ads){
         </div>
 
         <div class="ad-actions">
-          ${ (status === 'expired') ? `<button class="btn approve btn-reawke" data-id="${ad.id}">Re-awake (₦1000)</button>` :
-             (status === 'live' ? `<button class="btn decline btn-offline" data-id="${ad.id}">Set Offline</button>` : `<button class="btn approve btn-online" data-id="${ad.id}">Set Online</button>`) }
+          ${ (status === 'expired' || (ad.status||'').toLowerCase()==='removed') ? `<button class="btn approve btn-reawke" data-id="${ad.id}">Re-awake (₦1000)</button>` :
+             ( (ad.status||'').toLowerCase() === 'live' ? `<button class="btn decline btn-offline" data-id="${ad.id}">Set Offline</button>` : `<button class="btn approve btn-online" data-id="${ad.id}">Set Online</button>`) }
           <button class="btn view btn-view" data-id="${ad.id}">View</button>
           <button class="btn decline btn-delete" data-id="${ad.id}" style="background:#fff;border:1px solid rgba(12,12,12,0.06)">Delete</button>
         </div>
@@ -261,7 +324,6 @@ async function reawkeAd(ad) {
   const u = readUser();
   if (!u || !u.id) { alert('Sign in required'); return; }
 
-  // reuse POST /api/ads to create payment/init with same details (server will create payment/ad)
   const payload = {
     seller_id: u.id,
     title: ad.title,
@@ -288,13 +350,11 @@ async function reawkeAd(ad) {
       const init = j.init;
       let redirectUrl = null;
       if (init.data) redirectUrl = init.data.authorization_url || init.data.link || init.data.checkout_url || init.data.authorization_url;
-      redirectUrl = redirectUrl || init.url || init.session && init.session.url || init.authorization_url || init.link;
+      redirectUrl = redirectUrl || init.url || (init.session && init.session.url) || init.authorization_url || init.link;
       if (redirectUrl) {
-        // redirect to gateway
         window.location.href = redirectUrl;
         return;
       } else {
-        // fallback: go to ads page (server verification will redirect to ads.html on success)
         window.location.href = '/ads.html?payment=initiated&ad=' + encodeURIComponent(j.adId || '');
         return;
       }
@@ -313,7 +373,7 @@ function openView(ad) {
   body.innerHTML = `
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div style="flex:1;min-width:220px">
-        <img src="${escapeHtml((Array.isArray(ad.images) && ad.images[0]) ? ad.images[0] : '')}" alt="" style="width:100%;height:260px;object-fit:cover;border-radius:8px" />
+        <img src="${escapeHtml((Array.isArray(ad.images) && ad.images[0]) ? ad.images[0] : '')}" alt="" style="width:100%;height:260px;object-fit:cover;border-radius:8px" onerror="this.src='https://i.postimg.cc/hv4h8YSs/placeholder.png'"/>
       </div>
       <div style="flex:2;min-width:260px">
         <h3 style="margin:0">${escapeHtml(ad.title)}</h3>
@@ -334,7 +394,6 @@ function openView(ad) {
 document.getElementById('closeView').addEventListener('click', ()=> document.getElementById('viewBackdrop').style.display = 'none');
 
 function showToast(msg, ms=2000) {
-  // simple toast using alert-free approach
   const el = document.createElement('div');
   el.style.position = 'fixed';
   el.style.left = '50%';
