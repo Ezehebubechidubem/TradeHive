@@ -3,11 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>TradeHive — My Ads</title>
+<title>TradeHive — My Ads (debuggable)</title>
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 <style>
-  :root{
-    --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
+  :root{ --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
     --border:rgba(7,16,20,0.06); --gold1:#FFB703; --gold2:#F59E0B;
     --danger:#d64541; --success:#16a34a; --rejected:#ef4444;
   }
@@ -49,9 +48,10 @@
   .tab{padding:8px 12px;border-radius:999px;border:1px solid var(--border);cursor:pointer;background:#fff;font-weight:800}
   .tab.active{box-shadow:0 6px 30px rgba(2,6,23,0.04);border:1px solid rgba(0,0,0,0.06)}
   .top-left{display:flex;gap:8px;align-items:center}
-  @media (max-width:980px){
-    .ad-media{width:120px;height:90px}
-  }
+  .debugBtn{background:#071014;color:#FFB703;padding:8px 10px;border-radius:10px;font-weight:800}
+  .debugModal{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:4000}
+  .debugBox{background:#fff;padding:12px;border-radius:8px;max-width:900px;width:94%;max-height:80vh;overflow:auto;font-family:monospace;font-size:12px;color:#111}
+  @media (max-width:980px){ .ad-media{width:120px;height:90px} }
 </style>
 </head>
 <body>
@@ -65,7 +65,6 @@
     <main class="card" aria-labelledby="adsTitle">
       <div class="top-row">
         <div class="top-left">
-          <!-- Back button to dashboard.html -->
           <a href="/dashboard.html" class="btn view" style="margin-right:8px">← Back</a>
           <div>
             <h1 id="adsTitle" class="title">My Ads — Manager</h1>
@@ -74,10 +73,14 @@
         </div>
 
         <div style="display:flex;flex-direction:column;align-items:flex-end;">
-          <div class="controls" style="margin-bottom:8px">
-            <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
-            <button id="refreshBtn" class="btn view">Refresh</button>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <div class="controls">
+              <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
+              <button id="refreshBtn" class="btn view">Refresh</button>
+            </div>
+            <button id="showDebug" class="debugBtn" title="Open debug JSON">Debug</button>
           </div>
+
           <div class="tabs" role="tablist" aria-label="Ad status filters">
             <div class="tab active" data-filter="all">All</div>
             <div class="tab" data-filter="pending">Pending</div>
@@ -92,7 +95,6 @@
     </main>
   </div>
 
-  <!-- view modal -->
   <div id="viewBackdrop" style="position:fixed;inset:0;display:none;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:2000">
     <div style="background:var(--card);padding:12px;border-radius:12px;max-width:820px;width:94%;max-height:90vh;overflow:auto">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -103,10 +105,34 @@
     </div>
   </div>
 
-<script>
-const BACKEND_BASE = location.origin || '';
-const USER_KEY = 'wire_user_v1';
+  <div id="debugModal" class="debugModal" role="dialog" aria-modal="true">
+    <div class="debugBox">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Last fetch response</strong>
+        <div>
+          <button id="closeDebug" class="btn view">Close</button>
+          <button id="copyDebug" class="btn view">Copy</button>
+        </div>
+      </div>
+      <pre id="debugJson" style="white-space:pre-wrap;margin-top:10px;"></pre>
+    </div>
+  </div>
 
+<script>
+/*
+  Updated frontend for ads listing with:
+   - verbose console logs for every fetch
+   - fallback queries (public /api/ads)
+   - debug modal to inspect last JSON
+   - robust image fallback
+*/
+
+const FALLBACK_BACKEND = 'https://tradehive-s4e6.onrender.com';
+const BACKEND_BASE = (typeof window === 'object' && window.BACKEND_BASE) ? window.BACKEND_BASE : (location.origin || FALLBACK_BACKEND);
+
+console.log('Ads page: BACKEND_BASE =', BACKEND_BASE);
+
+const USER_KEY = 'wire_user_v1';
 function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
@@ -115,12 +141,18 @@ const emptyEl = document.getElementById('empty');
 const refreshBtn = document.getElementById('refreshBtn');
 const searchQ = document.getElementById('searchQ');
 const tabEls = Array.from(document.querySelectorAll('.tab'));
+const showDebugBtn = document.getElementById('showDebug');
+const debugModal = document.getElementById('debugModal');
+const debugJsonEl = document.getElementById('debugJson');
+const closeDebugBtn = document.getElementById('closeDebug');
+const copyDebugBtn = document.getElementById('copyDebug');
 
-let currentFilter = 'all'; // all | pending | live | rejected
+let lastFetchResult = null;
+let lastAdsCache = [];
+let currentFilter = 'all';
 
 refreshBtn.addEventListener('click', ()=> loadAds());
 searchQ.addEventListener('input', debounce(()=> renderAds(lastAdsCache), 250));
-
 tabEls.forEach(t => t.addEventListener('click', (ev)=>{
   tabEls.forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
@@ -128,49 +160,18 @@ tabEls.forEach(t => t.addEventListener('click', (ev)=>{
   loadAds();
 }));
 
-// debounce helper
+showDebugBtn.addEventListener('click', ()=> {
+  debugJsonEl.textContent = lastFetchResult ? JSON.stringify(lastFetchResult, null, 2) : 'No fetch result yet';
+  debugModal.style.display = 'flex';
+});
+closeDebugBtn.addEventListener('click', ()=> { debugModal.style.display = 'none'; });
+copyDebugBtn.addEventListener('click', ()=> {
+  if (!lastFetchResult) return alert('Nothing to copy');
+  navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(lastFetchResult, null, 2));
+  alert('Copied to clipboard');
+});
+
 function debounce(fn, ms=200){ let to; return (...a)=>{ clearTimeout(to); to = setTimeout(()=>fn(...a), ms); }; }
-
-let lastAdsCache = [];
-
-async function loadAds(){
-  const u = readUser();
-  adsGrid.innerHTML = '<div style="grid-column:1/-1" class="center muted-note">Loading...</div>';
-  // Build URL depending on whether there's a signed-in user or not.
-  try {
-    let url;
-    const statusMap = { pending: 'pending_verification', live: 'live', rejected: 'removed' };
-    if (u && u.id) {
-      // my ads endpoint (returns all my ads)
-      url = `${BACKEND_BASE}/api/my/ads?user_id=${encodeURIComponent(u.id)}`;
-    } else {
-      // show public ads endpoint; filter by status if not 'all'
-      if (currentFilter === 'all') url = `${BACKEND_BASE}/api/ads`;
-      else url = `${BACKEND_BASE}/api/ads?status=${encodeURIComponent(statusMap[currentFilter] || currentFilter)}`;
-    }
-
-    const res = await fetch(url, { credentials: 'include' });
-    const json = await res.json().catch(()=>null);
-
-    if (!res.ok || !json || !json.success) {
-      // fallback to empty
-      adsGrid.innerHTML = '';
-      emptyEl.style.display = 'block';
-      emptyEl.textContent = 'No ads found or server unreachable.';
-      lastAdsCache = [];
-      return;
-    }
-    const ads = Array.isArray(json.ads) ? json.ads : [];
-    lastAdsCache = ads;
-    renderAds(ads);
-  } catch (e) {
-    console.error('loadAds', e);
-    adsGrid.innerHTML = '';
-    emptyEl.style.display = 'block';
-    emptyEl.textContent = 'Network error fetching ads.';
-    lastAdsCache = [];
-  }
-}
 
 function computeExpiry(createdAtIso) {
   try {
@@ -184,7 +185,6 @@ function isExpired(createdAtIso) {
   if (!expiry) return false;
   return Date.now() > expiry.getTime();
 }
-
 function statusHtml(status, createdAtIso) {
   const st = String(status || '').toLowerCase();
   if (st === 'pending' || st === 'pending_verification' || st === 'pending_payment') {
@@ -204,12 +204,76 @@ function statusHtml(status, createdAtIso) {
   }
   return `<div class="badge">${escapeHtml(String(status||'draft').toUpperCase())}</div>`;
 }
-
 function imageForAd(ad) {
   const img = (Array.isArray(ad.images) && ad.images.length) ? ad.images[0] : (ad.image || '');
-  // fallback placeholder if empty or broken
   if (!img) return 'https://i.postimg.cc/hv4h8YSs/placeholder.png';
+  // If the value looks like a cloudinary public_id (no protocol and no slash), don't assume it's a full url.
+  if (!img.startsWith('http://') && !img.startsWith('https://')) {
+    // fallback: show placeholder (can't build cloudinary url reliably here)
+    return 'https://i.postimg.cc/hv4h8YSs/placeholder.png';
+  }
   return img;
+}
+
+async function tryFetchJson(url, opts = {}) {
+  console.log('[fetch] ->', url);
+  try {
+    const r = await fetch(url, opts);
+    const txt = await r.text().catch(()=>null);
+    let json = null;
+    try { json = txt ? JSON.parse(txt) : null; } catch(e) { console.warn('Failed to parse JSON for', url, txt); }
+    console.log('[fetch] <-', url, 'status=', r.status, 'json=', json);
+    return { ok: r.ok, status: r.status, json, raw: txt };
+  } catch (e) {
+    console.error('[fetch] error', url, e);
+    return { ok:false, status:0, json:null, error: String(e) };
+  }
+}
+
+async function loadAds(){
+  const u = readUser();
+  adsGrid.innerHTML = '<div style="grid-column:1/-1" class="center muted-note">Loading...</div>';
+  emptyEl.style.display = 'none';
+
+  // Build a list of candidate URLs to try (in order). This helps debugging if one route exists but another doesn't.
+  const urlsToTry = [];
+  if (u && u.id) {
+    urlsToTry.push(`${BACKEND_BASE}/api/my/ads?user_id=${encodeURIComponent(u.id)}`);
+    // backend sometimes uses seller_id or returns via /api/ads?seller_id=...
+    urlsToTry.push(`${BACKEND_BASE}/api/ads?seller_id=${encodeURIComponent(u.id)}`);
+  } else {
+    // public fallback
+    urlsToTry.push(`${BACKEND_BASE}/api/ads`);
+  }
+  // also try plain /api/ads always as last resort
+  if (!urlsToTry.includes(`${BACKEND_BASE}/api/ads`)) urlsToTry.push(`${BACKEND_BASE}/api/ads`);
+
+  let result = null;
+  for (const url of urlsToTry) {
+    const r = await tryFetchJson(url, { credentials:'include' });
+    lastFetchResult = { url, ok: r.ok, status: r.status, json: r.json, raw: r.raw, attemptedAt: (new Date()).toISOString() };
+    // keep lastFetchResult for Debug modal
+    if (r.ok && r.json && Array.isArray(r.json.ads)) { result = r.json; break; }
+    // if server returned a success:true but ads missing, capture it and still fallback
+    if (r.json && r.json.success && Array.isArray(r.json.ads)) { result = r.json; break; }
+    // otherwise continue trying fallbacks
+  }
+
+  // Save lastFetchResult (already stored)
+  console.log('Final fetch result saved to lastFetchResult:', lastFetchResult);
+
+  if (!result) {
+    // no route returned an ads array
+    adsGrid.innerHTML = '';
+    emptyEl.style.display = 'block';
+    emptyEl.textContent = 'No ads found or server unreachable. Open Debug to inspect last fetch result.';
+    lastAdsCache = [];
+    return;
+  }
+
+  // If we got here, `result` is expected to contain an { success: true, ads: [...] }
+  lastAdsCache = Array.isArray(result.ads) ? result.ads : [];
+  renderAds(lastAdsCache);
 }
 
 function renderAds(ads){
@@ -272,7 +336,6 @@ function renderAds(ads){
     `;
     adsGrid.appendChild(el);
 
-    // wire buttons
     el.querySelectorAll('.btn-delete').forEach(b=> b.addEventListener('click', ()=> deleteAd(ad)));
     el.querySelectorAll('.btn-offline').forEach(b=> b.addEventListener('click', ()=> setAdStatus(ad,'offline')));
     el.querySelectorAll('.btn-online').forEach(b=> b.addEventListener('click', ()=> setAdStatus(ad,'live')));
@@ -291,6 +354,7 @@ async function deleteAd(ad) {
       body: JSON.stringify({ status: 'removed' })
     });
     const j = await res.json().catch(()=>null);
+    console.log('deleteAd response', j);
     if (res.ok && j && j.success) {
       alert('Ad removed');
       await loadAds();
@@ -310,6 +374,7 @@ async function setAdStatus(ad, status) {
       body: JSON.stringify({ status })
     });
     const j = await res.json().catch(()=>null);
+    console.log('setAdStatus', status, j);
     if (res.ok && j && j.success) {
       showToast('Status updated');
       await loadAds();
@@ -345,8 +410,8 @@ async function reawkeAd(ad) {
       body: JSON.stringify(payload)
     });
     const j = await res.json().catch(()=>null);
+    console.log('reawke init response', j);
     if (res.ok && j && j.success && j.init) {
-      // try to find redirect url inside j.init
       const init = j.init;
       let redirectUrl = null;
       if (init.data) redirectUrl = init.data.authorization_url || init.data.link || init.data.checkout_url || init.data.authorization_url;
