@@ -1255,3 +1255,231 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
     res.json({ received: true });
   } catch (err) { console.error('Stripe webhook error', err); res.status(400).send(`Webhook Error: ${err.message}`); }
 });
+/////////////////////////////////////////////////////////////////////
+// Admin endpoints for ads verification (approve/decline)
+/////////////////////////////////////////////////////////////////////
+app.get('/admin/ads/pending', adminAuth, async (req,res) => {
+  try {
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.status=$1 ORDER BY created_at DESC', ['pending_verification']);
+      return res.json({ success:true, ads: r.rows });
+    } finally { client.release(); }
+  } catch(e){ console.error('admin list pending', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/approve', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['live', id]);
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` });
+      return res.json({ success:true, message:'approved' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin approve', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/decline', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const { reason } = req.body || {};
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['removed', id]);
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason || 'No reason provided'}` });
+      return res.json({ success:true, message:'declined' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin decline', e); res.status(500).json({ success:false }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// User endpoints (profile, online toggle with geolocation, bank, my ads, patch ad status)
+/////////////////////////////////////////////////////////////////////
+// Get user safe profile
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT id, role, email, phone, fullname, username, city, kyc_status, avatar_url, account_details, online, created_at FROM users WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'user-not-found' });
+      return res.json({ success:true, user: q.rows[0] });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+// Toggle online/offline with geolocation
+app.post('/api/users/:id/online', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { online } = req.body || {};
+    const lat = req.body.lat || null;
+    const lng = req.body.lng || null;
+    if (typeof online === 'undefined') return res.status(400).json({ success:false, message:'online boolean required' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (lat !== null && lng !== null) {
+        await client.query(`UPDATE users SET account_details = coalesce(account_details, '{}'::jsonb) || jsonb_build_object('last_lat', $1, 'last_lng', $2), online = $3 WHERE id=$4`, [String(lat), String(lng), online, id]);
+      } else {
+        await client.query(`UPDATE users SET online = $1 WHERE id=$2`, [online, id]);
+      }
+      if (!online) await client.query(`UPDATE ads SET status='offline', updated_at=now() WHERE seller_id=$1 AND status='live'`, [id]);
+      else await client.query(`UPDATE ads SET status='live', updated_at=now() WHERE seller_id=$1 AND status='offline'`, [id]);
+      await client.query('COMMIT');
+      return res.json({ success:true, message: `online set to ${online}` });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id/online', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+// Save bank / payout details
+app.post('/api/users/:id/bank', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { account_number, bank_code, name, recipient_code, beneficiary_id, connect_account_id } = req.body || {};
+    if (!account_number || !bank_code || !name) return res.status(400).json({ success:false, message:'account_number, bank_code and name required' });
+
+    const client = await pool.connect();
+    try {
+      const details = { account_number: String(account_number), bank_code: String(bank_code), name: String(name) };
+      if (recipient_code) details.recipient_code = String(recipient_code);
+      if (beneficiary_id) details.beneficiary_id = String(beneficiary_id);
+      if (connect_account_id) details.connect_account_id = String(connect_account_id);
+      await client.query('UPDATE users SET account_details = coalesce(account_details, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify(details), id]);
+      return res.json({ success:true, message:'bank details saved' });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id/bank', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+// Get seller ads for dashboard
+app.get('/api/my/ads', async (req, res) => {
+  try {
+    const userId = req.query.user_id || req.query.user || null;
+    if (!userId) return res.status(400).json({ success:false, message:'user_id required' });
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE seller_id=$1 ORDER BY created_at DESC', [userId]);
+      return res.json({ success:true, ads: r.rows });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/my/ads', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+// Patch ad status
+app.patch('/api/ads/:id/status', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body || {};
+    if (!status) return res.status(400).json({ success:false, message:'status required' });
+    const allowed = ['live','offline','removed','pending_verification','draft','expired','pending_payment'];
+    if (!allowed.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [status, id]);
+      return res.json({ success:true, message:'status-updated' });
+    } finally { client.release(); }
+  } catch (err) { console.error('PATCH /api/ads/:id/status', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Orders release & confirm routes (unchanged)
+/////////////////////////////////////////////////////////////////////
+app.post('/api/orders/:id/release', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'paid') return res.status(400).json({ success:false, message:'order-not-paid' });
+
+      await client.query('UPDATE orders SET status=$1, released_at=now(), release_followup_stage=0, updated_at=now() WHERE id=$2', ['released', orderId]);
+
+      const now = new Date();
+      const day1 = addWorkingDays(now, 1);
+      const day2 = addWorkingDays(now, 2);
+      const day3 = addWorkingDays(now, 3);
+      const day4 = addWorkingDays(now, 4);
+
+      await scheduleJobAt('order-followup', { orderId, stage:1 }, day1);
+      await scheduleJobAt('order-followup', { orderId, stage:2 }, day2);
+      await scheduleJobAt('order-followup', { orderId, stage:3 }, day3);
+      await scheduleJobAt('order-followup', { orderId, stage:4 }, day4);
+
+      const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.buyer_id])).rows[0];
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (buyer) await sendEmail({ to: buyer.email || buyer.username, subject: `Seller released order ${orderId}`, text: `Seller released order ${orderId}. Please confirm receipt.` });
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `You released order ${orderId}`, text: `You released order ${orderId}. Await buyer confirmation.` });
+
+      return res.json({ success:true, message:'order released, followups scheduled (working days)' });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/release', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.post('/api/orders/:id/confirm', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'released') return res.status(400).json({ success:false, message:'order-not-released' });
+
+      await client.query('UPDATE orders SET status=$1, buyer_confirmed_at=now(), updated_at=now() WHERE id=$2', ['completed', orderId]);
+
+      const pay = (await client.query('SELECT * FROM payments WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1', [orderId])).rows[0];
+      const settlementDays = (function getSettlementDays(meta){
+        if (!meta) return 2;
+        try {
+          const m = typeof meta === 'string' ? JSON.parse(meta) : meta;
+          if (m.provider_verify && m.provider_verify.data) {
+            const p = m.provider_verify.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          if (m.provider_init && m.provider_init.data) {
+            const p = m.provider_init.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          return 2;
+        } catch(e){ return 2; }
+      })(pay ? pay.meta : null);
+
+      const payoutDate = addWorkingDays(new Date(), settlementDays);
+      await scheduleJobAt('payout-seller', { orderId }, payoutDate);
+
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Buyer confirmed receipt for ${orderId}`, text: `Buyer confirmed. Payout scheduled in ${settlementDays} working day(s) (on ${payoutDate.toDateString()}).` });
+
+      return res.json({ success:true, message:`Order completed; payout scheduled in ${settlementDays} working day(s).` });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/confirm', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+/////////////////////////////////////////////////////////////////////
+// Health & graceful shutdown
+/////////////////////////////////////////////////////////////////////
+app.get('/health', (req,res) => res.json({ ok:true, now: new Date().toISOString() }));
+
+const server = app.listen(PORT, ()=> console.log(`TradeHive backend listening on ${PORT}`));
+
+async function shutdown() {
+  console.log('Shutting down...');
+  try {
+    if (jobWorker) { await jobWorker.close(); console.log('job worker closed'); }
+    if (jobQueue) { await jobQueue.close(); console.log('job queue closed'); }
+    if (redis) { redis.disconnect(); console.log('redis disconnected'); }
+    server.close(()=> { console.log('HTTP server closed'); process.exit(0); });
+  } catch(e){ console.error('shutdown error', e); process.exit(1); }
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
