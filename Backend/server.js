@@ -19,7 +19,14 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const sgMail = require('@sendgrid/mail');
 
+let sendgrid = null;
+
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  sendgrid = sgMail;
+}
 // fetch polyfill if necessary
 let fetchLib = global.fetch;
 if (!fetchLib) {
