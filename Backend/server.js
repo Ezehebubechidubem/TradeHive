@@ -17,7 +17,6 @@ const { Pool } = require('pg');
 const IORedis = require('ioredis');
 const { Queue, Worker } = require('bullmq');
 const fetch = global.fetch || require('node-fetch');
-const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
