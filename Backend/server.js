@@ -502,7 +502,55 @@ function cloudinarySignedUrl(public_id, opts = {}) {
     return null;
   }
 }
+// Utility: build public url for ads images if stored as public_id
+function cloudinaryPublicUrl(public_id, opts = {}) {
+  if (!cloudinary || !public_id) return null;
+  try {
+    return cloudinary.url(public_id, { secure: true, type: 'upload', resource_type: opts.resource_type || 'image', ...opts });
+  } catch (e) {
+    console.error('cloudinaryPublicUrl error', e && e.message ? e.message : e);
+    return null;
+  }
+}
 
+// Helper: get best URL from multer file object
+function fileUrlFromMulterFile(file) {
+  if (!file) return null;
+  // multer-storage-cloudinary usually exposes 'path' or 'location' (older versions), or 'secure_url' / 'url'
+  return file.path || file.location || file.secure_url || file.url || (file.filename ? `/uploads/ads/${file.filename}` : null) || null;
+}
+
+// Helper: convert stored images array to safe URLs for frontend
+function mapAdImagesForResponse(imagesArray) {
+  if (!imagesArray) return [];
+  return imagesArray.map(item => {
+    if (!item) return null;
+    if (typeof item === 'string') {
+      // If already an http(s) url -> return as-is
+      if (item.startsWith('http://') || item.startsWith('https://')) return item;
+      // If cloudinary public id-like string and cloudinary available -> build upload URL
+      if (cloudinary) return cloudinaryPublicUrl(item) || item;
+      // fallback -> return as-is
+      return item;
+    }
+    // if stored as object (older format), try to find url fields
+    if (typeof item === 'object') {
+      return item.url || item.secure_url || item.path || item.location || null;
+    }
+    return null;
+  }).filter(Boolean);
+}
+
+/////////////////////////////////////////////////////////////////////
+// POST /api/ads  - create ad + start ad-fee payment
+// Accepts multipart/form-data images[] OR JSON body.images (array of urls/public_ids)
+/////////////////////////////////////////////////////////////////////
+
+// choose upload middleware: prefer uploadAds (cloudinary public) else diskAdsUpload else no-op
+const adsUploadMiddleware = uploadAds ? uploadAds.array('images', 8) : (diskAdsUpload ? diskAdsUpload.array('images', 8) : (req, res, next) => next());
+
+// If you already defined app earlier, use that app:
+// app.post('/api/ads', adsUploadMiddleware, async (req, res) => { ... })
 /////////////////////////////////////////////////////////////////////
 // KYC endpoints: submit & status
 /////////////////////////////////////////////////////////////////////
