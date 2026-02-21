@@ -525,3 +525,246 @@ async function payoutSeller({ seller, amount, currency='NGN', metadata={} }) {
 /////////////////////////////////////////////////////////////////////
 // Helper: fileUrlFromMulterFile - read file info from multer/cloudinary file object
 //////////////////////////////////////////////////////////
+function fileUrlFromMulterFile(file) {
+  if (!file) return null;
+  return file.path || file.location || file.secure_url || file.url || (file.filename ? `/uploads/ads/${file.filename}` : null) || null;
+}
+
+/////////////////////////////////////////////////////////////////////
+// TEMP ADS UPLOAD endpoint (store files temporarily on server)
+// POST /api/ads/upload-temp  (multipart form field: images[])
+/////////////////////////////////////////////////////////////////////
+app.post('/api/ads/upload-temp', uploadTempAds.array('images', 8), async (req, res) => {
+  try {
+    const files = req.files || [];
+    const out = files.map(f => ({
+      temp_id: f.filename,
+      filename: f.originalname,
+      path: `/uploads/tmp_ads/${f.filename}`
+    }));
+    return res.json({ success:true, files: out });
+  } catch (err) {
+    console.error('/api/ads/upload-temp error', err);
+    return res.status(500).json({ success:false, message:'upload-failed' });
+  }
+});
+
+/////////////////////////////////////////////////////////////////////
+// KYC endpoints (submit & status) - uses uploadCloud or disk fallback
+/////////////////////////////////////////////////////////////////////
+const uploadHandlerForKyc = uploadCloud || uploadDisk;
+app.post('/api/kyc/submit', uploadHandlerForKyc.fields([
+  { name: 'id_images', maxCount: 6 },
+  { name: 'work_videos', maxCount: 2 },
+  { name: 'selfie', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const userId = body.userId || body.user_id;
+    if (!userId) return res.status(400).json({ success:false, message:'userId required' });
+
+    const files = req.files || {};
+    const idImages = [];
+    const workVideos = [];
+    let selfiePath = null;
+
+    function fileInfoToUrl(f) {
+      if (!f) return null;
+      if (f.path && !cloudinary) return f.path;
+      if (f.public_id) return { public_id: f.public_id, resource_type: f.resource_type || 'image' };
+      if (f.location) return f.location;
+      if (f.url) return f.url;
+      return f.path || null;
+    }
+
+    (files.id_images || []).forEach(f => {
+      const info = fileInfoToUrl(f);
+      if (info) idImages.push(info);
+    });
+    (files.work_videos || []).forEach(f => {
+      const info = fileInfoToUrl(f);
+      if (info) workVideos.push(info);
+    });
+    if ((files.selfie || [])[0]) {
+      selfiePath = fileInfoToUrl((files.selfie || [])[0]);
+    }
+
+    const reqId = 'kyc_' + uid();
+    const insert = `INSERT INTO kyc_requests (id, user_id, id_type, id_name, id_number, id_images, work_videos, selfie, status, submitted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())`;
+    const client = await pool.connect();
+    try {
+      const serialize = arr => (arr || []).map(i => typeof i === 'object' && i.public_id ? i.public_id : (typeof i === 'string' ? i : null)).filter(Boolean);
+      const selfieStored = (typeof selfiePath === 'object' && selfiePath.public_id) ? selfiePath.public_id : (typeof selfiePath === 'string' ? selfiePath : null);
+
+      await client.query(insert, [reqId, userId, body.id_type || null, body.id_name || null, body.id_number || null, serialize(idImages), serialize(workVideos), selfieStored, 'pending']);
+      await client.query('UPDATE users SET kyc_status=$1 WHERE id=$2', ['pending', userId]);
+      if (process.env.ADMIN_EMAIL) {
+        await sendEmail({ to: process.env.ADMIN_EMAIL, subject: `KYC submitted by ${userId}`, text: `User ${userId} submitted KYC. Review at admin UI.` });
+      }
+      return res.json({ success:true, requestId: reqId });
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('/api/kyc/submit error', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.get('/api/kyc/status/:id', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const ures = await client.query('SELECT id, email, fullname, username, kyc_status, account_details, online FROM users WHERE id=$1 LIMIT 1', [userId]);
+      if (!ures.rows.length) return res.status(404).json({ success:false, message:'user-not-found' });
+      const user = ures.rows[0];
+      const kres = await client.query('SELECT * FROM kyc_requests WHERE user_id=$1 ORDER BY submitted_at DESC LIMIT 1', [userId]);
+      const latest = kres.rows[0] || null;
+
+      function mapToUrls(arr, resource_type='image') {
+        if (!arr) return [];
+        return arr.map(item => {
+          if (!item) return null;
+          if (typeof item === 'string' && cloudinary) {
+            return cloudinarySignedUrl(item, { resource_type });
+          }
+          if (typeof item === 'string') {
+            if (item.startsWith('/') || item.indexOf('/') === -1) {
+              return item;
+            }
+            return item;
+          }
+          return null;
+        }).filter(Boolean);
+      }
+
+      let latestOut = null;
+      if (latest) {
+        const idImgs = Array.isArray(latest.id_images) ? latest.id_images : [];
+        const vids = Array.isArray(latest.work_videos) ? latest.work_videos : [];
+        latestOut = {
+          id: latest.id,
+          user_id: latest.user_id,
+          id_type: latest.id_type,
+          id_name: latest.id_name,
+          id_number: latest.id_number,
+          id_images: mapToUrls(idImgs, 'image'),
+          work_videos: mapToUrls(vids, 'video'),
+          selfie: (latest.selfie && cloudinary) ? cloudinarySignedUrl(latest.selfie, { resource_type: 'image' }) : latest.selfie,
+          status: latest.status,
+          admin_note: latest.admin_note,
+          submitted_at: latest.submitted_at
+        };
+      }
+
+      return res.json({ success:true, user, latest_request: latestOut });
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('/api/kyc/status/:id error', err);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Registration & Login endpoints
+/////////////////////////////////////////////////////////////////////
+app.post('/api/register', async (req, res) => {
+  try {
+    const { role, email, phone, fullname, username, state, lga, city, gender, specializations, password } = req.body || {};
+    if (!email || !validEmail(email)) return res.status(400).json({ success:false, message:'Invalid email' });
+    if (!phone || !validPhone(phone)) return res.status(400).json({ success:false, message:'Invalid phone' });
+    if (!fullname || fullname.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid full name' });
+    if (!username || username.trim().length < 3) return res.status(400).json({ success:false, message:'Invalid username' });
+    if (!state || !lga || !city) return res.status(400).json({ success:false, message:'State/LGA/City required' });
+    if (!password || password.length < 6) return res.status(400).json({ success:false, message:'Password must be at least 6 characters' });
+
+    const client = await pool.connect();
+    try {
+      const dupQuery = `SELECT email, username, phone FROM users WHERE email = $1 OR username = $2 OR phone = $3 LIMIT 1`;
+      const dupRes = await client.query(dupQuery, [email, username, phone]);
+      if (dupRes.rows.length) return res.status(409).json({ success:false, message: 'Email, username or phone already exists' });
+
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(password, salt);
+      const newUser = {
+        id: uid(),
+        role: role || 'client',
+        email, phone, fullname, username,
+        state, lga, city,
+        gender: gender || 'other',
+        specializations: Array.isArray(specializations) ? specializations : [],
+        password_hash: hash
+      };
+      const insertSql = `
+        INSERT INTO users (id, role, email, phone, fullname, username, state, lga, city, gender, specializations, password_hash)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `;
+      await client.query(insertSql, [
+        newUser.id, newUser.role, newUser.email, newUser.phone, newUser.fullname, newUser.username,
+        newUser.state, newUser.lga, newUser.city, newUser.gender, newUser.specializations, newUser.password_hash
+      ]);
+      return res.json({ success:true, message:'Account created successfully', userId: newUser.id });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Server error /api/register', err);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { login, password, email } = req.body || {};
+    if (!login || !password) return res.status(400).json({ success: false, message: 'Login and password required' });
+    const loginValue = String(login).trim();
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+    const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
+
+    if (loginValue === ADMIN_USERNAME) {
+      if (ADMIN_PASSWORD_HASH && await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) {
+        return res.json({ success:true, message:'Admin login successful', role:'admin', user:null });
+      }
+      return res.status(401).json({ success:false, message:'Invalid credentials' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const q = `SELECT * FROM users WHERE email=$1 OR username=$1 OR phone=$1 LIMIT 1`;
+      const r = await client.query(q, [loginValue]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'User not found' });
+      const user = r.rows[0];
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) return res.status(401).json({ success:false, message:'Incorrect password' });
+
+      const safeUser = {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        phone: user.phone,
+        fullname: user.fullname,
+        username: user.username,
+        city: user.city,
+        kyc_status: user.kyc_status,
+        avatar_url: user.avatar_url,
+        online: user.online,
+        account_details: user.account_details
+      };
+
+      if ((user.role || '').toLowerCase() === 'staff') {
+        const BASE = process.env.ADMIN_UI_BASE || 'https://your-admin-ui.example.com';
+        return res.json({ success:true, message:'Staff login', role:'staff', user:safeUser, redirect: BASE + '/staff' });
+      }
+
+      return res.json({ success:true, message:'Login successful', role:user.role||'client', user:safeUser });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('Server error /api/login', e);
+    return res.status(500).json({ success:false, message:'Server error' });
+  }
+});
+
+app.get('/', (req,res)=> res.send('TradeHive backend running'));
+
+/////////////////////////////////////////////////////////////////////
