@@ -1041,3 +1041,229 @@ app.get('/pay/ad-callback', (req, res) => verifyAndProcessProviderPayment(req, r
 app.get('/pay/order-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
 
 //////////////////////////////////////////////////////////
+Webhooks (paystack, flutterwave, stripe)
+/////////////////////////////////////////////////////////////////////
+app.post('/webhook/paystack', express.json({ limit:'1mb' }), async (req, res) => {
+  try {
+    if (process.env.PAYSTACK_SECRET_KEY && !verifyPaystackSignature(req)) { console.warn('Paystack signature mismatch'); return res.status(400).send('invalid signature'); }
+    const b = req.body || {};
+    const data = b.data || {};
+    const reference = data.reference || data.id || null;
+    const client = await pool.connect();
+    try {
+      if (!reference) return res.status(200).send('ok');
+      const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [reference]);
+      if (!pq.rows.length) return res.status(200).send('ok');
+      const payment = pq.rows[0];
+      if ((payment.status || '').toLowerCase() === 'success') return res.status(200).send('ok');
+      if (data.status === 'success' || String(data.gateway_response || '').toLowerCase().includes('approved')) {
+        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), payment.id]);
+        if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
+        if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
+      }
+      return res.status(200).send('ok');
+    } finally { client.release(); }
+  } catch (err) { console.error('Paystack webhook error', err); res.status(500).send('error'); }
+});
+
+app.post('/webhook/flutterwave', express.json({ limit:'1mb' }), async (req, res) => {
+  try {
+    const header = req.headers['verif-hash'] || req.headers['verif_hash'] || req.headers['x-verif-hash'];
+    if (process.env.FLUTTERWAVE_WEBHOOK_SECRET && header !== process.env.FLUTTERWAVE_WEBHOOK_SECRET) { console.warn('Flutterwave webhook signature mismatch'); return res.status(400).send('invalid signature'); }
+    const b = req.body || {};
+    const data = b.data || {};
+    const ref = data.tx_ref || data.flw_ref || data.reference;
+    const client = await pool.connect();
+    try {
+      let p = null;
+      if (ref) {
+        const pq = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [ref]);
+        if (pq.rows.length) p = pq.rows[0];
+      }
+      if (!p && data.meta && data.meta.orderId) {
+        const pq2 = await client.query("SELECT * FROM payments WHERE meta->>'orderId' = $1 LIMIT 1", [String(data.meta.orderId)]);
+        if (pq2.rows.length) p = pq2.rows[0];
+      }
+      if (p && (String(data.status).toLowerCase() === 'successful' || String(data.status).toLowerCase() === 'success')) {
+        await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: data }), p.id]);
+        if (p.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', p.ad_id]);
+        if (p.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', p.order_id]);
+      } else {
+        console.log('flutterwave webhook: not success or not matched', data.status);
+      }
+      return res.status(200).send('ok');
+    } finally { client.release(); }
+  } catch (e) { console.error('Flutterwave webhook error', e); res.status(500).send('error'); }
+});
+
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripeLib || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('stripe not configured');
+  try {
+    const sig = req.headers['stripe-signature'];
+    const event = stripeLib.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    if (!event) return res.status(400).send('invalid event');
+    const type = event.type;
+    if (type === 'checkout.session.completed' || type === 'payment_intent.succeeded') {
+      const session = event.data.object;
+      const client = await pool.connect();
+      try {
+        let payment = null;
+        const metadata = session.metadata || {};
+        if (metadata.paymentId) {
+          const pq = await client.query('SELECT * FROM payments WHERE id=$1 LIMIT 1', [metadata.paymentId]);
+          if (pq.rows.length) payment = pq.rows[0];
+        }
+        if (!payment && metadata.orderId) {
+          const pq2 = await client.query('SELECT * FROM payments WHERE order_id=$1 LIMIT 1', [metadata.orderId]);
+          if (pq2.rows.length) payment = pq2.rows[0];
+        }
+        if (!payment) {
+          const pq3 = await client.query('SELECT * FROM payments WHERE reference=$1 LIMIT 1', [session.id]);
+          if (pq3.rows.length) payment = pq3.rows[0];
+        }
+        if (payment) {
+          await client.query('UPDATE payments SET status=$1, meta = coalesce(meta, \'{}\'::jsonb) || $2 WHERE id=$3', ['success', JSON.stringify({ provider_data: session }), payment.id]);
+          if (payment.ad_id) await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', payment.ad_id]);
+          if (payment.order_id) await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', payment.order_id]);
+        }
+      } finally { client.release(); }
+    }
+    res.json({ received: true });
+  } catch (err) { console.error('Stripe webhook error', err); res.status(400).send(`Webhook Error: ${err.message}`); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Admin endpoints for ads verification (approve/decline)
+/////////////////////////////////////////////////////////////////////
+app.get('/admin/ads/pending', adminAuth, async (req,res) => {
+  try {
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.status=$1 ORDER BY created_at DESC', ['pending_verification']);
+      return res.json({ success:true, ads: r.rows });
+    } finally { client.release(); }
+  } catch(e){ console.error('admin list pending', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/approve', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['live', id]);
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) { try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` }); } catch(e){ console.warn('sendEmail approve failed', e && e.message ? e.message : e); } }
+      return res.json({ success:true, message:'approved' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin approve', e); res.status(500).json({ success:false }); }
+});
+
+app.post('/admin/ads/:id/decline', adminAuth, async (req,res) => {
+  try {
+    const id = req.params.id;
+    const { reason } = req.body || {};
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['removed', id]);
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
+      if (seller) { try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason || 'No reason provided'}` }); } catch(e){ console.warn('sendEmail decline failed', e && e.message ? e.message : e); } }
+      return res.json({ success:true, message:'declined' });
+    } finally { client.release(); }
+  } catch (e){ console.error('admin decline', e); res.status(500).json({ success:false }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// User endpoints (profile, online toggle with geolocation, bank details, my ads, patch ad status)
+/////////////////////////////////////////////////////////////////////
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT id, role, email, phone, fullname, username, city, kyc_status, avatar_url, account_details, online, created_at FROM users WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'user-not-found' });
+      return res.json({ success:true, user: q.rows[0] });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.post('/api/users/:id/online', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { online } = req.body || {};
+    const lat = req.body.lat || null;
+    const lng = req.body.lng || null;
+    if (typeof online === 'undefined') return res.status(400).json({ success:false, message:'online boolean required' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (lat !== null && lng !== null) {
+        await client.query(`UPDATE users SET account_details = coalesce(account_details, '{}'::jsonb) || jsonb_build_object('last_lat', $1, 'last_lng', $2), online = $3 WHERE id=$4`, [String(lat), String(lng), online, id]);
+      } else {
+        await client.query(`UPDATE users SET online = $1 WHERE id=$2`, [online, id]);
+      }
+      if (!online) {
+        await client.query(`UPDATE ads SET status='offline', updated_at=now() WHERE seller_id=$1 AND status='live'`, [id]);
+      } else {
+        await client.query(`UPDATE ads SET status='live', updated_at=now() WHERE seller_id=$1 AND status='offline'`, [id]);
+      }
+      await client.query('COMMIT');
+      return res.json({ success:true, message: `online set to ${online}` });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id/online', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.post('/api/users/:id/bank', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { account_number, bank_code, name, recipient_code, beneficiary_id, connect_account_id } = req.body || {};
+    if (!account_number || !bank_code || !name) return res.status(400).json({ success:false, message:'account_number, bank_code and name required' });
+
+    const client = await pool.connect();
+    try {
+      const details = { account_number: String(account_number), bank_code: String(bank_code), name: String(name) };
+      if (recipient_code) details.recipient_code = String(recipient_code);
+      if (beneficiary_id) details.beneficiary_id = String(beneficiary_id);
+      if (connect_account_id) details.connect_account_id = String(connect_account_id);
+
+      await client.query('UPDATE users SET account_details = coalesce(account_details, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify(details), id]);
+      return res.json({ success:true, message:'bank details saved' });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/users/:id/bank', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.get('/api/my/ads', async (req, res) => {
+  try {
+    const userId = req.query.user_id || req.query.user || null;
+    if (!userId) return res.status(400).json({ success:false, message:'user_id required' });
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT * FROM ads WHERE seller_id=$1 ORDER BY created_at DESC', [userId]);
+      return res.json({ success:true, ads: r.rows });
+    } finally { client.release(); }
+  } catch (err) { console.error('/api/my/ads', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.patch('/api/ads/:id/status', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body || {};
+    if (!status) return res.status(400).json({ success:false, message:'status required' });
+
+    const allowed = ['live','offline','removed','pending_verification','draft','expired','pending_payment'];
+    if (!allowed.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
+
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [status, id]);
+      return res.json({ success:true, message:'status-updated' });
+    } finally { client.release(); }
+  } catch (err) { console.error('PATCH /api/ads/:id/status', err); return res.status(500).json({ success:false, message:'server-error' }); }
+});
