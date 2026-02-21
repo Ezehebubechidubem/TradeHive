@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TradeHive — My Orders</title>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --muted:#9aa7b7; --accent:#f6c84c; --accent-2:#ffd166;
+      --glass: rgba(255,255,255,0.03);
+      --radius:12px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color-scheme: dark;
+    }
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071026 0%, #071a2a 100%); color:#e6eef6}
+    a{color:var(--accent)}
+    .container{max-width:1100px;margin:28px auto;padding:18px}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+    .logo {display:flex;align-items:center;gap:10px}
+    .logo svg{width:44px;height:44px}
+    .brand{font-weight:700;font-size:18px;letter-spacing:0.4px}
+    .top-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+    .btn{background:var(--glass);border:1px solid rgba(255,255,255,0.03);padding:8px 12px;border-radius:10px;color:var(--muted);cursor:pointer;font-weight:600}
+    .btn.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#071324;border:none}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border:1px solid rgba(255,255,255,0.03); border-radius:var(--radius); padding:14px}
+    .grid{display:grid;grid-template-columns: 320px 1fr; gap:18px}
+    .left{min-height:520px}
+    .section-title{font-weight:700;color:#f8fafc;margin-bottom:8px}
+    .muted{color:var(--muted);font-size:13px}
+    .switch{display:flex;gap:8px;margin:10px 0}
+    .tab{flex:1;padding:8px;border-radius:10px;text-align:center;cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.02)}
+    .tab.active{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);font-weight:700}
+    .list{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+    .order-row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01))}
+    .order-info{display:flex;gap:12px;align-items:center}
+    .thumb{width:56px;height:56px;background:#0a2532;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--muted)}
+    .order-meta{min-width:220px}
+    .order-actions{display:flex;gap:8px;align-items:center}
+    .small{font-size:13px;color:var(--muted)}
+    .detail-panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:10px}
+    .images-row{display:flex;gap:8px;margin-top:8px}
+    .images-row img{width:96px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
+    /* chat */
+    .chat-pane{position:fixed;right:24px;bottom:24px;width:360px;height:520px;background:linear-gradient(180deg,#071826,#052033);border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.7);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,0.03)}
+    .chat-header{padding:12px;display:flex;align-items:center;gap:10px;background:linear-gradient(90deg,rgba(255,255,255,0.02), rgba(255,255,255,0.01));}
+    .chat-body{flex:1;padding:12px;overflow:auto}
+    .chat-footer{padding:10px;border-top:1px solid rgba(255,255,255,0.02);display:flex;gap:8px}
+    .msg{display:inline-block;padding:8px 10px;border-radius:10px;margin:6px 0;max-width:80%;font-size:14px}
+    .msg.me{background:linear-gradient(90deg,#0e7b5d,#0fac66);color:white;margin-left:auto}
+    .msg.them{background:rgba(255,255,255,0.03);color:var(--muted)}
+    .fullscreen{position:fixed;inset:8px;z-index:9999;width:calc(100% - 16px);height:calc(100% - 16px)}
+    /* rating modal */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center}
+    .modal{background:#071321;padding:18px;border-radius:12px;max-width:480px;width:100%;border:1px solid rgba(255,255,255,0.03)}
+    .stars{display:flex;gap:6px}
+    .star{font-size:28px;cursor:pointer;color:var(--muted)}
+    .star.active{color:var(--accent)}
+    .tiny{font-size:12px;color:var(--muted)}
+    footer{margin-top:22px;color:var(--muted);text-align:center;font-size:13px}
+    input,select,textarea{background:transparent;border:1px solid rgba(255,255,255,0.03);padding:8px;border-radius:8px;color:inherit}
+    .muted-pill{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);font-weight:600}
+    /* responsive */
+    @media (max-width:980px){ .grid{grid-template-columns:1fr;}.chat-pane{right:10px;left:10px;width:auto} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <!-- inline TradeHive logo (simple honeycomb/bee-ish) -->
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+          <defs><linearGradient id="g1" x1="0" x2="1"><stop offset="0" stop-color="#ffd166"/><stop offset="1" stop-color="#f6c84c"/></linearGradient></defs>
+          <rect width="64" height="64" rx="12" fill="#071827"/>
+          <g transform="translate(8,8)">
+            <polygon points="16,0 24,8 16,16 8,8" fill="#ffe7a7"/>
+            <polygon points="0,8 8,0 16,8 8,16" fill="#ffd166"/>
+            <circle cx="32" cy="8" r="6" fill="url(#g1)"/>
+            <rect x="12" y="20" width="24" height="10" rx="3" fill="#ffd166"/>
+          </g>
+        </svg>
+        <div>
+          <div class="brand">TradeHive</div>
+          <div class="tiny muted">Orders • Chat • Ratings</div>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="userIdInput" placeholder="User ID" style="width:160px" />
+          <select id="initialRole" style="padding:8px;border-radius:8px">
+            <option value="buyer">Buyer</option>
+            <option value="seller">Seller</option>
+          </select>
+          <button class="btn primary" id="btnSetUser">Set</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="left">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div class="section-title">My Orders</div>
+              <div class="muted">Switch between buyer and seller views</div>
+            </div>
+            <div style="text-align:right">
+              <div id="currentUserBadge" class="muted-pill">Not signed in</div>
+            </div>
+          </div>
+
+          <div class="switch">
+            <div id="tabSeller" class="tab">Seller orders</div>
+            <div id="tabBuyer" class="tab active">Buyer orders</div>
+          </div>
+
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+            <input id="searchInput" placeholder="Search orders or product" style="flex:1" />
+            <button class="btn" id="btnRefresh">Refresh</button>
+          </div>
+
+          <div id="ordersList" class="list" style="margin-top:10px">
+            <!-- order rows injected here -->
+          </div>
+
+          <div style="margin-top:12px" class="muted tiny">Tip: click an order to view details, use the chat button to message the other party.</div>
+        </div>
+
+        <div style="height:18px"></div>
+
+        <div class="card">
+          <div class="section-title">Transactions & History</div>
+          <div class="muted" style="margin-top:8px">Recent activity will appear here. Use the refresh button to pull new data from the server.</div>
+          <div id="activityList" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card detail-panel" id="detailPanel">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div id="detailTitle" style="font-weight:800;font-size:18px">Select an order to view details</div>
+              <div id="detailSub" class="small muted">Details appear here</div>
+            </div>
+            <div>
+              <button class="btn" id="btnChatOpen">Open Chat</button>
+            </div>
+          </div>
+
+          <div id="orderDetailsContent" style="margin-top:14px">
+            <div class="muted">No order selected</div>
+          </div>
+        </div>
+
+        <div style="height:18px"></div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="section-title">Quick Shop</div>
+            <div class="muted small">Demo products</div>
+          </div>
+          <div style="margin-top:8px" class="muted">If backend is offline this demo product will be used.</div>
+
+          <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+            <div style="flex:1">
+              <div style="font-weight:700">Demo: Handcrafted Lamp</div>
+              <div class="tiny muted">NGN 6,500 • seller: demo_seller</div>
+            </div>
+            <div>
+              <button class="btn primary" id="btnBuyDemo">Buy</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <footer>© TradeHive — neat, simple & focused</footer>
+  </div>
+
+  <!-- Chat pane (hidden by default) -->
+  <div id="chatPane" class="chat-pane" style="display:none">
+    <div class="chat-header">
+      <div id="chatWith" style="font-weight:700">Chat</div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="btnChatFullscreen">⤢</button>
+        <button class="btn" id="btnChatClose">✕</button>
+      </div>
+    </div>
+    <div id="chatBody" class="chat-body"></div>
+    <div class="chat-footer">
+      <input id="chatInput" placeholder="Write a message..." style="flex:1" />
+      <button class="btn primary" id="btnSendMsg">Send</button>
+    </div>
+  </div>
+
+  <!-- Rating modal -->
+  <div id="ratingModal" style="display:none" class="modal-backdrop">
+    <div class="modal">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:800">Rate transaction</div>
+        <div class="tiny muted" id="rateOrderId">Order #</div>
+      </div>
+      <div style="margin-top:12px" class="tiny muted">How would you rate this transaction?</div>
+      <div style="margin-top:12px" class="stars" id="starsRow">
+        <div class="star" data-v="1">★</div>
+        <div class="star" data-v="2">★</div>
+        <div class="star" data-v="3">★</div>
+        <div class="star" data-v="4">★</div>
+        <div class="star" data-v="5">★</div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn" id="btnRateCancel">Cancel</button>
+        <button class="btn primary" id="btnRateSubmit">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // API Base (adjust if your frontend is hosted separately)
+  window.API_BASE = ''; // e.g. 'https://yourbackend.onrender.com' if cross-origin
+
+  // Utils
+  const $ = (s, root=document) => root.querySelector(s);
+  const $$ = (s, root=document) => Array.from(root.querySelectorAll(s));
+  function api(path, opts={}) {
+    const url = (window.API_BASE || '') + path;
+    return fetch(url, opts).then(async r => {
+      const ct = r.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return r.json();
+      return r.text();
+    });
+  }
+
+  // state
+  let currentRole = localStorage.getItem('th_role') || 'buyer';
+  let currentUserId = localStorage.getItem('th_user_id') || '';
+  let selectedOrder = null;
+  let currentChatPartner = null;
+  let chatConvId = null;
+  let lastFetchedOrders = [];
+
+  // DOM refs
+  const tabSeller = $('#tabSeller'), tabBuyer = $('#tabBuyer'), ordersList = $('#ordersList');
+  const currentUserBadge = $('#currentUserBadge'), userIdInput = $('#userIdInput'), btnSetUser = $('#btnSetUser');
+  const btnRefresh = $('#btnRefresh'), searchInput = $('#searchInput');
+  const detailTitle = $('#detailTitle'), detailSub = $('#detailSub'), orderDetailsContent = $('#orderDetailsContent');
+  const chatPane = $('#chatPane'), chatBody = $('#chatBody'), chatWith = $('#chatWith');
+  const btnChatOpen = $('#btnChatOpen'), btnChatClose = $('#btnChatClose'), btnChatFullscreen = $('#btnChatFullscreen');
+  const chatInput = $('#chatInput'), btnSendMsg = $('#btnSendMsg');
+  const ratingModal = $('#ratingModal'), starsRow = $('#starsRow'), btnRateSubmit = $('#btnRateSubmit'), btnRateCancel = $('#btnRateCancel');
+
+  // set initial UI
+  function setUserUI() {
+    if (currentUserId) {
+      currentUserBadge.textContent = `Signed: ${currentUserId} (${currentRole})`;
+      userIdInput.value = currentUserId;
+      $('#initialRole').value = currentRole;
+    } else {
+      currentUserBadge.textContent = 'Not signed in';
+    }
+  }
+  setUserUI();
+
+  // set role tabs
+  function setRole(r) {
+    currentRole = r;
+    localStorage.setItem('th_role', r);
+    tabSeller.classList.toggle('active', r==='seller');
+    tabBuyer.classList.toggle('active', r==='buyer');
+    setUserUI();
+    fetchAndRenderOrders();
+  }
+  tabSeller.addEventListener('click', ()=> setRole('seller'));
+  tabBuyer.addEventListener('click', ()=> setRole('buyer'));
+
+  // set user id
+  btnSetUser.addEventListener('click', ()=> {
+    const v = userIdInput.value.trim();
+    if (!v) { alert('Enter user id'); return; }
+    currentUserId = v;
+    localStorage.setItem('th_user_id', currentUserId);
+    currentRole = $('#initialRole').value || currentRole;
+    localStorage.setItem('th_role', currentRole);
+    setUserUI();
+    fetchAndRenderOrders();
+  });
+
+  // refresh
+  btnRefresh.addEventListener('click', ()=> fetchAndRenderOrders());
+
+  // try several endpoints for orders; fallback gracefully
+  async function tryFetchOrdersFor(role, userId){
+    const paths = [];
+    if (role === 'seller') {
+      paths.push(`/api/orders?seller_id=${encodeURIComponent(userId)}`);
+      paths.push(`/api/orders?user_id=${encodeURIComponent(userId)}`);
+      paths.push(`/api/my/ads?user_id=${encodeURIComponent(userId)}`); // fallback: show ads
+      paths.push(`/api/my/ads?user=${encodeURIComponent(userId)}`);
+      paths.push(`/api/orders?seller=${encodeURIComponent(userId)}`);
+    } else {
+      paths.push(`/api/orders?buyer_id=${encodeURIComponent(userId)}`);
+      paths.push(`/api/orders?user_id=${encodeURIComponent(userId)}`);
+      paths.push(`/api/my/orders?user_id=${encodeURIComponent(userId)`);
+      paths.push(`/api/my/orders?user=${encodeURIComponent(userId)}`);
+    }
+
+    for (const p of paths) {
+      try {
+        const res = await fetch((window.API_BASE||'')+p);
+        if (!res.ok) continue;
+        const data = await res.json().catch(()=>null);
+        if (!data) continue;
+        // expected shapes:
+        // { success:true, orders: [...] } OR { success:true, ads:[...] } OR array
+        if (data.success && (data.orders || data.ads || data.items)) {
+          const list = data.orders || data.ads || data.items;
+          return { ok:true, items:list, source:p };
+        }
+        // sometimes server returns { orders: [...] } without success
+        if (Array.isArray(data)) return { ok:true, items:data, source:p };
+        if (data.orders && Array.isArray(data.orders)) return { ok:true, items:data.orders, source:p };
+        if (data.ads && Array.isArray(data.ads)) return { ok:true, items:data.ads, source:p };
+      } catch(e){
+        // continue
+      }
+    }
+    return { ok:false };
+  }
+
+  // render order row (works for both order objects and ad objects)
+  function renderOrderRow(item){
+    // normalize fields
+    const isOrder = !!item.id && !!item.ad_id;
+    const id = item.id || item.adId || item.ad_id || item.adId;
+    const title = item.title || item.title || (item.ad_title || '—');
+    const qty = item.qty || item.quantity || item.qty || 1;
+    const price = item.amount || item.price || 0;
+    const status = item.status || 'unknown';
+    const other = isOrder ? (item.seller_id === currentUserId ? item.buyer_id : item.seller_id) : (item.seller_id || item.seller || 'unknown');
+    const thumb = (Array.isArray(item.images) && item.images[0]) ? item.images[0] : null;
+
+    const el = document.createElement('div');
+    el.className = 'order-row';
+    el.dataset.id = id;
+    el.innerHTML = `
+      <div class="order-info">
+        <div class="thumb">${thumb ? '<img src="'+escapeHtml(thumb)+'" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px" />' : '<span style="font-size:12px;color:var(--muted)">IMG</span>'}</div>
+        <div>
+          <div style="font-weight:700">${escapeHtml(title || 'Untitled')}</div>
+          <div class="small muted">${isOrder ? 'Order' : 'Ad'} • ${escapeHtml(String(status))} • ${qty} ×</div>
+        </div>
+      </div>
+      <div class="order-actions">
+        <div style="text-align:right">
+          <div style="font-weight:800">₦ ${Number(price).toLocaleString()}</div>
+          <div class="small muted">with ${escapeHtml(String(other || '—'))}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-left:6px">
+          <button class="btn" data-action="view">View</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn" data-action="chat">Chat</button>
+            <button class="btn" data-action="more">⋯</button>
+          </div>
+        </div>
+      </div>
+    `;
+    // handlers
+    el.querySelector('[data-action="view"]').addEventListener('click', ()=> selectOrder(item));
+    el.querySelector('[data-action="chat"]').addEventListener('click', ()=> openChatWithOther(item));
+    el.querySelector('[data-action="more"]').addEventListener('click', ()=> showOrderMore(item));
+    return el;
+  }
+
+  function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  // fetch + render
+  async function fetchAndRenderOrders(){
+    ordersList.innerHTML = '<div class="muted small">Loading…</div>';
+    if (!currentUserId) {
+      ordersList.innerHTML = '<div class="muted small">Sign in with your User ID to see orders.</div>';
+      return;
+    }
+    const role = currentRole;
+    const res = await tryFetchOrdersFor(role, currentUserId);
+    if (!res.ok) {
+      ordersList.innerHTML = '<div class="muted small">Could not fetch orders — backend may not expose a listing endpoint. If you just posted an ad, check /api/my/ads</div>';
+      return;
+    }
+    const items = Array.isArray(res.items) ? res.items : [];
+    lastFetchedOrders = items;
+    if (!items.length) {
+      ordersList.innerHTML = '<div class="muted small">No orders found.</div>';
+      return;
+    }
+    ordersList.innerHTML = '';
+    items.forEach(it => {
+      const row = renderOrderRow(it);
+      ordersList.appendChild(row);
+    });
+    // preselect first
+    selectOrder(items[0]);
+  }
+
+  // select order to show details
+  function selectOrder(item) {
+    selectedOrder = item;
+    const isOrder = !!item.ad_id || !!item.orderId || (item.hasOwnProperty('qty') && item.hasOwnProperty('amount'));
+    const title = item.title || item.ad_title || (isOrder ? `Order ${item.id}` : 'Ad');
+    detailTitle.textContent = title;
+    detailSub.textContent = `Status: ${item.status || '—'} • ID: ${item.id || item.adId || item.ad_id || '—'}`;
+
+    // content
+    const price = item.amount || item.price || 0;
+    const html = [];
+    html.push(`<div style="display:flex;justify-content:space-between;align-items:center">`);
+    html.push(`<div><div style="font-weight:800">₦ ${Number(price).toLocaleString()}</div><div class="small muted">${item.qty || item.quantity || '1'} ×</div></div>`);
+    html.push(`<div style="text-align:right"><div class="tiny muted">Seller</div><div style="font-weight:700">${escapeHtml(item.seller_id || item.seller || '—')}</div></div>`);
+    html.push('</div>');
+
+    if (item.description) html.push(`<div style="margin-top:10px" class="muted small">${escapeHtml(item.description)}</div>`);
+
+    // images
+    const imgs = Array.isArray(item.images) ? item.images : (item.image ? [item.image] : []);
+    if (imgs.length) {
+      html.push('<div class="images-row">');
+      imgs.slice(0,4).forEach(u => html.push(`<img src="${escapeHtml(u)}" alt="">`));
+      html.push('</div>');
+    }
+
+    // actions
+    html.push('<div style="margin-top:12px;display:flex;gap:8px">');
+    // if order and status==paid --> show release button if seller; if released -> confirm if buyer
+    if (item.id && item.ad_id) {
+      if (currentUserId && currentUserId === item.seller_id && item.status === 'paid') {
+        html.push(`<button class="btn primary" id="btnRelease">Mark as released</button>`);
+      }
+      if (currentUserId && currentUserId === item.buyer_id && item.status === 'released') {
+        html.push(`<button class="btn primary" id="btnConfirm">Confirm receipt</button>`);
+      }
+    }
+    html.push(`<button class="btn" id="btnOpenChat">Chat</button>`);
+    html.push(`<button class="btn" id="btnRate">Rate</button>`);
+    html.push('</div>');
+
+    orderDetailsContent.innerHTML = html.join('');
+
+    // wire actions
+    const btnOpenChatLocal = $('#btnOpenChat');
+    if (btnOpenChatLocal) btnOpenChatLocal.addEventListener('click', ()=> openChatWithOther(item));
+    const btnRate = $('#btnRate');
+    if (btnRate) btnRate.addEventListener('click', ()=> openRatingFor(item));
+    const btnRelease = $('#btnRelease');
+    if (btnRelease) btnRelease.addEventListener('click', async ()=>{
+      if (!confirm('Mark order as released?')) return;
+      const id = item.id;
+      try {
+        const r = await api(`/api/orders/${encodeURIComponent(id)}/release`, { method:'POST' });
+        if (r && r.success) { alert('Order released'); fetchAndRenderOrders(); selectOrder({...item, status:'released'}); }
+        else alert('Failed: '+(r && r.message || JSON.stringify(r)));
+      } catch(e){ alert('Error'); }
+    });
+    const btnConfirm = $('#btnConfirm');
+    if (btnConfirm) btnConfirm.addEventListener('click', async ()=>{
+      if (!confirm('Confirm receipt and complete order?')) return;
+      const id = item.id;
+      try {
+        const r = await api(`/api/orders/${encodeURIComponent(id)}/confirm`, { method:'POST' });
+        if (r && r.success) { alert('Order completed'); fetchAndRenderOrders(); selectOrder({...item, status:'completed'}); openRatingFor(item); }
+        else alert('Failed: '+(r && r.message || JSON.stringify(r)));
+      } catch(e){ alert('Error'); }
+    });
+  }
+
+  // "Chat" helpers
+  function otherPartyFrom(item){
+    if (!item) return null;
+    if (item.id && item.ad_id) { // order
+      if (currentUserId === item.seller_id) return item.buyer_id;
+      return item.seller_id;
+    }
+    if (item.seller_id) return item.seller_id;
+    if (item.seller) return item.seller;
+    return null;
+  }
+
+  function openChatWithOther(item){
+    const other = otherPartyFrom(item);
+    if (!other) { alert('No chat partner'); return; }
+    openChat(other);
+  }
+
+  function openChat(partnerId){
+    if (!currentUserId) { alert('Set your User ID first'); return; }
+    currentChatPartner = partnerId;
+    chatConvId = `conv_${[currentUserId, partnerId].sort().join('_')}`;
+    chatWith.textContent = `Chat — ${partnerId}`;
+    chatPane.style.display = 'flex';
+    chatPane.classList.remove('fullscreen');
+    loadChatMessages();
+  }
+
+  $('#btnChatOpen').addEventListener('click', ()=> {
+    if (!selectedOrder) return alert('Select an order first');
+    const other = otherPartyFrom(selectedOrder);
+    if (!other) return alert('No partner found');
+    openChat(other);
+  });
+  btnChatClose.addEventListener('click', ()=> chatPane.style.display='none');
+  btnChatFullscreen.addEventListener('click', ()=> {
+    if (chatPane.classList.contains('fullscreen')) chatPane.classList.remove('fullscreen');
+    else chatPane.classList.add('fullscreen');
+  });
+
+  async function loadChatMessages(){
+    chatBody.innerHTML = '<div class="muted small">Loading…</div>';
+    const q1 = `/api/messages?user1=${encodeURIComponent(currentUserId)}&user2=${encodeURIComponent(currentChatPartner)}`;
+    try {
+      const r = await fetch((window.API_BASE||'')+q1);
+      if (!r.ok) { chatBody.innerHTML = '<div class="muted small">No chat endpoint available</div>'; return; }
+      const data = await r.json();
+      const msgs = data.messages || data || [];
+      chatBody.innerHTML = '';
+      msgs.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'msg ' + (m.from_user === currentUserId ? 'me' : 'them');
+        div.textContent = m.body;
+        chatBody.appendChild(div);
+      });
+      chatBody.scrollTop = chatBody.scrollHeight;
+    } catch(e){
+      chatBody.innerHTML = '<div class="muted small">Unable to load messages</div>';
+    }
+  }
+
+  btnSendMsg.addEventListener('click', async ()=>{
+    const text = chatInput.value.trim(); if (!text) return;
+    const payload = { conversation_id: chatConvId, from_user: currentUserId, to_user: currentChatPartner, body: text };
+    try {
+      const r = await fetch((window.API_BASE||'')+'/api/messages', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      if (r.ok) {
+        chatInput.value = '';
+        await loadChatMessages();
+      } else {
+        alert('Send failed');
+      }
+    } catch(e){ alert('Error sending'); }
+  });
+
+  // rating modal
+  function openRatingFor(order){
+    if (!order || !order.id) { alert('No order to rate'); return; }
+    ratingModal.style.display = 'flex';
+    $('#rateOrderId').textContent = `#${order.id}`;
+    // reset stars
+    $$('.star', starsRow).forEach(s => s.classList.remove('active'));
+    ratingModal.dataset.orderId = order.id;
+    ratingModal.dataset.rating = '0';
+  }
+  btnRateCancel.addEventListener('click', ()=> ratingModal.style.display='none');
+  $$('.star', starsRow).forEach(s => s.addEventListener('click', (e)=>{
+    const v = Number(e.currentTarget.dataset.v || 0);
+    ratingModal.dataset.rating = String(v);
+    $$('.star', starsRow).forEach(st => st.classList.toggle('active', Number(st.dataset.v) <= v));
+  }));
+  btnRateSubmit.addEventListener('click', async ()=>{
+    const rating = Number(ratingModal.dataset.rating || 0);
+    const orderId = ratingModal.dataset.orderId;
+    if (!rating || !orderId) { alert('Choose rating'); return; }
+    // try backend endpoint
+    try {
+      const r = await fetch((window.API_BASE||'')+`/api/orders/${encodeURIComponent(orderId)}/rate`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rating })});
+      if (r.ok) {
+        const j = await r.json().catch(()=>null);
+        if (j && j.success) { alert('Thanks for rating'); ratingModal.style.display='none'; return; }
+      }
+      // fallback: store locally
+      const local = JSON.parse(localStorage.getItem('th_local_ratings')||'{}');
+      local[orderId] = rating;
+      localStorage.setItem('th_local_ratings', JSON.stringify(local));
+      alert('Rating saved locally (no server endpoint).');
+      ratingModal.style.display='none';
+    } catch(e) { alert('Error saving rating'); }
+  });
+
+  // "more" menu sample
+  function showOrderMore(item){
+    const opts = [];
+    if (item.id && item.ad_id) {
+      opts.push({label:'View raw', action:()=> alert(JSON.stringify(item, null,2))});
+    } else {
+      opts.push({label:'View ad', action:()=> alert(JSON.stringify(item, null,2))});
+    }
+    const sel = prompt('Choose: 1) Raw JSON  2) Cancel', '1');
+    if (sel === '1') (opts[0] && opts[0].action && opts[0].action());
+  }
+
+  // Demo buy button: creates a quick order via POST /api/ads/:id/buy using demo ad id or shows fallback
+  $('#btnBuyDemo').addEventListener('click', async ()=>{
+    if (!currentUserId) return alert('Set your User ID first');
+    // demo ad id fallback
+    const demoAd = 'demo_ad_0001';
+    try {
+      const body = { buyer_id: currentUserId, qty: 1, idempotency_key: 'demo_' + Date.now() };
+      const r = await fetch((window.API_BASE||'')+`/api/ads/${encodeURIComponent(demoAd)}/buy`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.success) {
+          alert('Checkout initialized. Follow payment redirect from returned init data.');
+          return;
+        }
+      }
+      alert('Demo buy failed or backend missing. This is a demo product only.');
+    } catch(e){ alert('Error'); }
+  });
+
+  // initial load
+  (function init(){
+    // set UI values
+    $('#initialRole').value = currentRole;
+    userIdInput.value = currentUserId;
+    setRole(currentRole);
+    setUserUI();
+    fetchAndRenderOrders();
+  })();
+
+  // small activity feed mock (just uses recent orders)
+  setInterval(()=> {
+    const act = $('#activityList');
+    act.innerHTML = '';
+    (lastFetchedOrders || []).slice(0,4).forEach(it => {
+      const d = document.createElement('div');
+      d.className = 'tiny muted';
+      d.style.marginBottom = '6px';
+      d.textContent = `${it.id || (it.ad_id||it.adId||'—')} • ${it.status || '—'} • ${it.amount || it.price || ''}`;
+      act.appendChild(d);
+    });
+  }, 4000);
+
+  </script>
+</body>
+</html>
