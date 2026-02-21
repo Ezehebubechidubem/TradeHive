@@ -688,40 +688,50 @@ app.post('/api/login', async (req, res) => {
 app.get('/', (req,res)=> res.send('TradeHive backend running'));
 
 /////////////////////////////////////////////////////////////////////
-// ADS routes: create ad (store ad WITHOUT images until payment verified)
+// ADS routes: create ad (idempotent style) - registers ad + payment
 /////////////////////////////////////////////////////////////////////
 app.post('/api/ads', async (req, res) => {
   try {
-    const { seller_id, title, description, temp_images, images, price, currency, quantity, location, category, subcategory, idempotency_key } = req.body || {};
-
+    const { seller_id, title, description, images, price, currency, quantity, location, category, subcategory, idempotency_key } = req.body || {};
     if (!seller_id || !title || !price) return res.status(400).json({ success:false, message:'seller_id, title, price required' });
 
     const client = await pool.connect();
     try {
+      // idempotency: if idempotency_key exists, look for existing payments with that key
       if (idempotency_key) {
-        const prev = (await client.query("SELECT p.id as payment_id, a.id as ad_id FROM payments p JOIN ads a ON p.ad_id=a.id WHERE p.meta->>'idempotency_key' = $1 LIMIT 1", [idempotency_key])).rows[0];
+        const prev = (await client.query(
+          "SELECT p.id as payment_id, a.id as ad_id FROM payments p JOIN ads a ON p.ad_id=a.id WHERE p.meta->>'idempotency_key' = $1 LIMIT 1",
+          [idempotency_key]
+        )).rows[0];
         if (prev) return res.json({ success:true, adId: prev.ad_id, paymentId: prev.payment_id, note:'idempotent-return' });
       }
 
       const adId = uid();
-      await client.query('INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [adId, seller_id, title, description || '', [], price, currency || 'NGN', quantity || 1, location || '', category || '', subcategory || '', 'pending_payment']);
+      await client.query(
+        'INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [adId, seller_id, title, description || '', Array.isArray(images) ? images : [], price, currency || 'NGN', quantity || 1, location || '', category || '', subcategory || '', 'pending_payment']
+      );
 
       const paymentId = uid();
       const adFee = Number(process.env.AD_FEE_NGN || 1000);
       const tx_ref = `th_ad_${uid()}_${Date.now()}`;
-      const tempImgs = Array.isArray(temp_images) ? temp_images : (Array.isArray(images) ? images : []);
-      const meta = { type:'ad_fee', adId, paymentId, idempotency_key: idempotency_key || null, tx_ref, temp_images: tempImgs };
+      const meta = { type:'ad_fee', adId, paymentId, idempotency_key: idempotency_key || null, tx_ref };
 
-      await client.query('INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)]);
+      await client.query(
+        'INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)]
+      );
 
       const sellerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [seller_id])).rows[0];
       const email = sellerEmailRow ? sellerEmailRow.email : `seller_${seller_id}@example.com`;
       const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/ad-callback';
       const initResp = await initializePayment({ provider: PAYMENT_PROVIDER, email, amount: adFee, metadata: { ...meta, email }, currency: currency || 'NGN', callback_url: callback });
 
+      // store provider_init inside the payments.meta
       if (initResp && (initResp.data || initResp.session)) {
         const prov = initResp.data || initResp.session;
-        await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
+        // <<< fixed quoting here: use a JS string that contains '{}' safely
+        await client.query("UPDATE payments SET meta = coalesce(meta, '{}'::jsonb) || $1 WHERE id=$2", [JSON.stringify({ provider_init: prov }), paymentId]);
         const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
         if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
       }
@@ -733,18 +743,65 @@ app.post('/api/ads', async (req, res) => {
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
+
 /////////////////////////////////////////////////////////////////////
-// GET /api/ads and GET /api/ads/:id
+// GET /api/ads (by status) and GET /api/ads/:id
 /////////////////////////////////////////////////////////////////////
+
+// helper to normalize images field into an array
+function normalizeImagesField(imagesField) {
+  if (!imagesField) return [];
+  if (Array.isArray(imagesField)) return imagesField;
+  // if stored as JSON string in DB, try parse
+  if (typeof imagesField === 'string') {
+    try {
+      const parsed = JSON.parse(imagesField);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+      // not JSON, treat as single string URL
+      return [imagesField];
+    }
+  }
+  // fallback to empty array
+  return [];
+}
+
 app.get('/api/ads', async (req, res) => {
   try {
     const status = req.query.status || 'live';
     const client = await pool.connect();
     try {
       const r = await client.query('SELECT * FROM ads WHERE status=$1 ORDER BY created_at DESC LIMIT 500', [status]);
-      return res.json({ success:true, ads: r.rows });
+      // normalize images on each ad so frontend receives an array
+      const ads = r.rows.map(ad => {
+        return {
+          ...ad,
+          images: normalizeImagesField(ad.images)
+        };
+      });
+      return res.json({ success:true, ads });
     } finally { client.release(); }
-  } catch (e) { console.error('GET /api/ads error', e); return res.status(500).json({ success:false }); }
+  } catch (e) {
+    console.error('GET /api/ads error', e);
+    return res.status(500).json({ success:false });
+  }
+});
+
+app.get('/api/ads/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.id=$1 LIMIT 1', [id]);
+      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      const ad = r.rows[0];
+      ad.images = normalizeImagesField(ad.images);
+      return res.json({ success:true, ad });
+    } finally { client.release(); }
+  } catch (e) {
+    console.error('GET /api/ads/:id', e);
+    return res.status(500).json({ success:false });
+  }
 });
 
 app.get('/api/ads/:id', async (req, res) => {
