@@ -41,14 +41,18 @@ if (process.env.SENDGRID_API_KEY) {
   }
 }
 
-// Cloudinary (optional)
+// --- Cloudinary setup: KYC (authenticated) + Ads (public) ---
 let cloudinary = null;
 let CloudinaryStorage = null;
-let uploadCloud = null;
+let uploadCloud = null;   // KYC
+let uploadAds = null;     // Ads
+
 try {
   if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    const multer = require('multer');
     cloudinary = require('cloudinary').v2;
     CloudinaryStorage = require('multer-storage-cloudinary').CloudinaryStorage;
+
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
@@ -56,29 +60,77 @@ try {
       secure: true
     });
 
-    const cloudStorage = new CloudinaryStorage({
+    // KYC storage (private/authenticated)
+    const kycStorage = new CloudinaryStorage({
       cloudinary,
       params: async (req, file) => {
         const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
-        // Make uploads authenticated/private
         return {
           folder: isVideo ? 'tradehive/kyc/videos' : 'tradehive/kyc/images',
           resource_type: isVideo ? 'video' : 'image',
-          type: 'authenticated',               // <-- private/authenticated
-          public_id: `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
+          type: 'authenticated',               // private/authenticated for KYC
+          public_id: `kyc-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
           overwrite: false,
         };
       }
     });
-    uploadCloud = multer({ storage: cloudStorage, limits: { fileSize: 200 * 1024 * 1024 } });
-    console.log('Cloudinary configured (authenticated uploads).');
+
+    // ADS storage (public)
+    const adsStorage = new CloudinaryStorage({
+      cloudinary,
+      params: async (req, file) => {
+        const isVideo = file.mimetype && file.mimetype.startsWith && file.mimetype.startsWith('video/');
+        return {
+          folder: isVideo ? 'tradehive/ads/videos' : 'tradehive/ads/images',
+          resource_type: isVideo ? 'video' : 'image',
+          type: 'upload',       // PUBLIC upload for ads
+          public_id: `ad-${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
+          overwrite: false,
+        };
+      }
+    });
+
+    uploadCloud = multer({ storage: kycStorage, limits: { fileSize: 200 * 1024 * 1024 } });
+    uploadAds = multer({ storage: adsStorage, limits: { fileSize: 100 * 1024 * 1024 } });
+
+    console.log('Cloudinary configured (kyc:authenticated, ads:public).');
   } else {
     console.log('Cloudinary not configured: using disk fallback.');
   }
 } catch (err) {
   console.error('Cloudinary setup error:', err && err.message ? err.message : err);
   uploadCloud = null;
+  uploadAds = null;
 }
+
+// Utility: signed URL builder for authenticated KYC resources
+function cloudinarySignedUrl(public_id, opts = {}) {
+  if (!cloudinary || !public_id) return null;
+  try {
+    return cloudinary.url(public_id, { sign_url: true, secure: true, type: 'authenticated', resource_type: opts.resource_type || 'image', ...opts });
+  } catch(e) {
+    console.error('cloudinarySignedUrl error', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
+/*
+Usage examples:
+
+// KYC route (authenticated/private)
+app.post('/api/kyc/submit', uploadCloud.fields([
+  { name: 'id_images', maxCount: 6 },
+  { name: 'selfie', maxCount: 1 }
+]), async (req, res) => {
+  // req.files contains authenticated uploads; store public_ids (or file.path) in DB
+});
+
+// Ads route (public)
+app.post('/api/ads', uploadAds.array('images', 6), async (req, res) => {
+  // req.files contains public uploads. Each file usually has file.path or file.location depending on multer-storage-cloudinary version.
+  // Save file.path (URL) or public_id to ads.images in DB.
+});
+*/
 
 /////////////////////////////////////////////////////////////////////
 // Express setup
