@@ -102,6 +102,18 @@ try {
   uploadCloud = null;
   uploadAds = null;
 }
+// fallback disk uploader
+  const uploadsDir = path.resolve(process.cwd(), 'uploads', 'ads');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  const diskStorage = multer.diskStorage({
+    destination: function (req, file, cb) { cb(null, uploadsDir); },
+    filename: function (req, file, cb) {
+      const safe = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+      cb(null, `${Date.now()}-${safe}`);
+    }
+  });
+  diskAdsUpload = multer({ storage: diskStorage, limits: { fileSize: 100 * 1024 * 1024 } });
+}
 
 // Utility: signed URL builder for authenticated KYC resources
 function cloudinarySignedUrl(public_id, opts = {}) {
