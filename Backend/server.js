@@ -1267,3 +1267,94 @@ app.patch('/api/ads/:id/status', async (req, res) => {
     } finally { client.release(); }
   } catch (err) { console.error('PATCH /api/ads/:id/status', err); return res.status(500).json({ success:false, message:'server-error' }); }
 });
+/////////////////////////////////////////////////////////////////////
+// Orders: release & confirm (buyer confirm -> schedule payout)
+/////////////////////////////////////////////////////////////////////
+app.post('/api/orders/:id/release', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'paid') return res.status(400).json({ success:false, message:'order-not-paid' });
+
+      await client.query('UPDATE orders SET status=$1, released_at=now(), release_followup_stage=0, updated_at=now() WHERE id=$2', ['released', orderId]);
+
+      const now = new Date();
+      await scheduleJobAt('order-followup', { orderId, stage:1 }, addWorkingDays(now,1));
+      await scheduleJobAt('order-followup', { orderId, stage:2 }, addWorkingDays(now,2));
+      await scheduleJobAt('order-followup', { orderId, stage:3 }, addWorkingDays(now,3));
+      await scheduleJobAt('order-followup', { orderId, stage:4 }, addWorkingDays(now,4));
+
+      const buyer = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.buyer_id])).rows[0];
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (buyer) try { await sendEmail({ to: buyer.email || buyer.username, subject: `Seller released order ${orderId}`, text: `Seller released order ${orderId}. Please confirm receipt.` }); } catch(e){ console.warn('sendEmail buyer release failed', e && e.message); }
+      if (seller) try { await sendEmail({ to: seller.email || seller.username, subject: `You released order ${orderId}`, text: `You released order ${orderId}. Await buyer confirmation.` }); } catch(e){ console.warn('sendEmail seller release failed', e && e.message); }
+
+      return res.json({ success:true, message:'order released, followups scheduled (working days)' });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/release', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+app.post('/api/orders/:id/confirm', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const client = await pool.connect();
+    try {
+      const or = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [orderId])).rows[0];
+      if (!or) return res.status(404).json({ success:false, message:'order-not-found' });
+      if (or.status !== 'released') return res.status(400).json({ success:false, message:'order-not-released' });
+
+      await client.query('UPDATE orders SET status=$1, buyer_confirmed_at=now(), updated_at=now() WHERE id=$2', ['completed', orderId]);
+
+      const pay = (await client.query('SELECT * FROM payments WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1', [orderId])).rows[0];
+
+      const settlementDays = (function getSettlementDays(meta){
+        if (!meta) return 2;
+        try {
+          const m = typeof meta === 'string' ? JSON.parse(meta) : meta;
+          if (m.provider_verify && m.provider_verify.data) {
+            const p = m.provider_verify.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          if (m.provider_init && m.provider_init.data) {
+            const p = m.provider_init.data;
+            const pt = (p.payment_type || p.payment_options || p.channel || '').toString().toLowerCase();
+            if (pt.includes('card')) return 6;
+          }
+          return 2;
+        } catch(e){ return 2; }
+      })(pay ? pay.meta : null);
+
+      const payoutDate = addWorkingDays(new Date(), settlementDays);
+      await scheduleJobAt('payout-seller', { orderId }, payoutDate);
+
+      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [or.seller_id])).rows[0];
+      if (seller) try { await sendEmail({ to: seller.email || seller.username, subject: `Buyer confirmed receipt for ${orderId}`, text: `Buyer confirmed. Payout scheduled in ${settlementDays} working day(s) (on ${payoutDate.toDateString()}).` }); } catch(e){ console.warn('sendEmail payout scheduled failed', e && e.message ? e.message : e); }
+
+      return res.json({ success:true, message:`Order completed; payout scheduled in ${settlementDays} working day(s).` });
+    } finally { client.release(); }
+  } catch (e) { console.error('/api/orders/:id/confirm', e); return res.status(500).json({ success:false, message:'server-error' }); }
+});
+
+/////////////////////////////////////////////////////////////////////
+// Small helpful endpoints & graceful shutdown
+/////////////////////////////////////////////////////////////////////
+app.get('/', (req,res) => res.send('TradeHive backend running'));
+app.get('/health', (req,res) => res.json({ ok:true, now: new Date().toISOString() }));
+
+const server = app.listen(PORT, ()=> console.log(`TradeHive backend listening on ${PORT}`));
+
+async function shutdown() {
+  console.log('Shutting down...');
+  try {
+    if (jobWorker) { await jobWorker.close(); console.log('job worker closed'); }
+    if (jobQueue) { await jobQueue.close(); console.log('job queue closed'); }
+    if (redis) { redis.disconnect(); console.log('redis disconnected'); }
+    server.close(()=> { console.log('HTTP server closed'); process.exit(0); });
+  } catch(e){ console.error('shutdown error', e); process.exit(1); }
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
