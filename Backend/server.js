@@ -1181,6 +1181,21 @@ async function verifyAndProcessProviderPayment(req, res) {
 
 app.get('/pay/ad-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
 app.get('/pay/order-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
+/////////////////////////////////////////////////
+//Make Debug Live//
+app.get('/debug/make-live', async (req, res) => {
+  try {
+    await pool.query(
+      "UPDATE ads SET status = 'live' WHERE seller_id = $1",
+      ['1377792842']
+    );
+
+    res.json({ success: true, message: 'All ads set to live' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
 //////////////////////////////////////////////////////////
 //Webhooks (paystack, flutterwave, stripe)//
 /////////////////////////////////////////////////////////////////////
