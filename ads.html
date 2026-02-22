@@ -9,49 +9,94 @@
   :root{
     --bg:#ffffff; --card:#ffffff; --text:#071014; --muted:#6b7280;
     --border:rgba(7,16,20,0.06); --gold1:#FFB703; --gold2:#F59E0B;
-    --danger:#d64541; --success:#16a34a; --rejected:#ef4444;
+    --radius:12px;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;font-family:Inter, Roboto, Arial, sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1100px;margin:18px auto;padding:16px}
-  header.banner{box-shadow:0 6px 30px rgba(0,0,0,0.06);position:relative;z-index:999}
-  .banner-inner{max-height:110px;overflow:hidden}
-  .banner img{width:100%;height:60%;object-fit:cover;max-height:110px;width:100vw;display:block}
-  main.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:18px;box-shadow:0 10px 40px rgba(2,6,23,0.06);border:1px solid var(--border);margin-top:-40px}
-  .top-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-  .title{font-size:20px;font-weight:900;margin:0}
-  .small-muted{font-size:13px;color:var(--muted)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
-  .ad-card{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;position:relative;overflow:hidden}
-  .ad-media{width:180px;height:130px;border-radius:8px;overflow:hidden;background:#f2f2f2;flex:0 0 180px}
-  .ad-media img{width:100%;height:100%;object-fit:cover}
+  a{color:inherit;text-decoration:none}
+  .page {
+    max-width:1100px;
+    margin:0 auto;
+    padding:0 12px 40px;
+  }
+
+  /* top logo banner */
+  header.banner{width:100%;display:block;position:relative}
+  .banner-inner{max-height:110px;overflow:hidden;border-bottom:1px solid var(--border);background:#000}
+  .banner-inner img{width:100%;height:110px;object-fit:cover;display:block}
+
+  /* header area: centered title and a small back arrow at top-left */
+  .page-header{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:8px;
+    margin-top:12px;
+    margin-bottom:12px;
+  }
+  .back-arrow{
+    position:relative;
+    left:0;
+    top:0;
+    align-self:flex-start;
+    margin-left:6px;
+    background:transparent;border:0;font-size:20px;padding:6px 8px;border-radius:8px;cursor:pointer;
+  }
+  /* keep arrow small and unobtrusive */
+  .back-arrow:hover{background:#f3f4f6}
+
+  .title{font-size:22px;font-weight:900;margin:0;text-align:center}
+  .subtitle{font-size:13px;color:var(--muted);text-align:center;max-width:760px}
+
+  /* center controls (search + refresh) and tabs */
+  .controls-row{display:flex;flex-direction:column;gap:8px;align-items:center;margin:12px 0}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+  .small-input{padding:8px 12px;border-radius:999px;border:1px solid var(--border);min-width:220px}
+  .btn{padding:8px 12px;border-radius:10px;border:0;cursor:pointer;font-weight:800}
+  .btn.view{background:transparent;border:1px dashed var(--border);color:var(--muted)}
+  .btn.refresh{background:#fff;border:1px solid var(--border)}
+
+  .tabs{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+  .tab{padding:10px 14px;border-radius:999px;border:1px solid var(--border);cursor:pointer;background:#fff;font-weight:800}
+  .tab.active{box-shadow:0 8px 30px rgba(2,6,23,0.06);border:1px solid rgba(0,0,0,0.06)}
+
+  /* main card that contains all ads (so nothing appears outside) */
+  main.card{
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:var(--radius);
+    padding:18px;
+    box-shadow:0 10px 40px rgba(2,6,23,0.04);
+    border:1px solid var(--border);
+    margin-bottom:30px;
+  }
+
+  .grid{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:880px){ .grid{grid-template-columns:repeat(1,1fr)} }
+
+  .ad-card{background:var(--card);border-radius:10px;padding:14px;border:1px solid rgba(7,16,20,0.04);display:flex;gap:12px;align-items:flex-start;overflow:hidden}
+  .ad-media{width:140px;height:100px;border-radius:8px;overflow:hidden;background:#f2f2f2;flex:0 0 140px;display:flex;align-items:center;justify-content:center}
+  .ad-media img{width:100%;height:100%;object-fit:cover;display:block}
   .ad-body{flex:1;display:flex;flex-direction:column;gap:8px}
+  .ad-top{display:flex;align-items:flex-start;gap:12px}
   .ad-title{font-weight:900}
   .ad-desc{color:var(--muted);font-size:13px}
   .ad-meta{display:flex;gap:12px;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap}
-  .ad-actions{display:flex;gap:8px;margin-top:8px}
-  .btn{padding:8px 12px;border-radius:10px;border:0;cursor:pointer;font-weight:800}
-  .btn.approve{background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014}
-  .btn.decline{background:#f3f4f6;color:#071014;border:1px solid var(--border)}
-  .btn.view{background:transparent;border:1px dashed var(--border);color:var(--muted)}
+  .ad-actions{display:flex;gap:8px;margin-top:8px;align-items:center}
+  .btn.approve{background:linear-gradient(180deg,var(--gold1),var(--gold2));color:#071014;padding:8px 12px;border-radius:10px;border:0}
+  .btn.decline{background:#f3f4f6;color:#071014;border:1px solid var(--border);padding:8px 12px;border-radius:10px}
+  .btn.view{background:transparent;border:1px dashed var(--border);color:var(--muted);padding:8px 12px;border-radius:10px}
   .badge{padding:6px 8px;border-radius:999px;font-weight:800;background:#f8fafc;border:1px solid var(--border);font-size:12px}
   .pending { background:#f2f2f2; color:#444; animation:blnk 1.2s infinite; padding:6px 8px; border-radius:999px; font-weight:800 }
   .live { background: linear-gradient(90deg,var(--gold1),var(--gold2)); color:#071014; padding:6px 8px; border-radius:999px; font-weight:900; display:inline-flex; gap:8px; align-items:center; }
   .offline { background:#fff;border:1px solid var(--border); color:var(--muted); padding:6px 8px; border-radius:999px; font-weight:800; }
-  .rejected { background: rgba(239,68,68,0.08); color:var(--rejected); padding:6px 8px; border-radius:999px; font-weight:900; border:1px solid rgba(239,68,68,0.12); }
+  .rejected { background: rgba(239,68,68,0.08); color:#ef4444; padding:6px 8px; border-radius:999px; font-weight:900; border:1px solid rgba(239,68,68,0.12); }
+
   @keyframes blnk {0%{opacity:1}50%{opacity:0.3}100%{opacity:1}}
-  .muted-note{font-size:13px;color:var(--muted)}
-  .small-input{padding:6px;border-radius:8px;border:1px solid var(--border)}
-  .controls{display:flex;gap:8px;align-items:center;margin-bottom:12px}
-  .center{display:flex;justify-content:center;align-items:center}
-  .empty{padding:40px;text-align:center;color:var(--muted)}
-  .tabs{display:flex;gap:8px;align-items:center;margin-bottom:12px}
-  .tab{padding:8px 12px;border-radius:999px;border:1px solid var(--border);cursor:pointer;background:#fff;font-weight:800}
-  .tab.active{box-shadow:0 6px 30px rgba(2,6,23,0.04);border:1px solid rgba(0,0,0,0.06)}
-  .top-left{display:flex;gap:8px;align-items:center}
-  @media (max-width:980px){
-    .ad-media{width:120px;height:90px}
-  }
+
+  .empty{padding:26px;text-align:center;color:var(--muted)}
+
+  /* ensure everything sits inside the card and not overflow screen on small devices */
+  .wrap-inside { max-width:100%; overflow:hidden; }
 </style>
 </head>
 <body>
@@ -61,31 +106,33 @@
     </div>
   </header>
 
-  <div class="wrap">
-    <main class="card" aria-labelledby="adsTitle">
-      <div class="top-row">
-        <div class="top-left">
-          <!-- Back button to dashboard.html -->
-          <a href="/dashboard.html" class="btn view" style="margin-right:8px">← Back</a>
-          <div>
-            <h1 id="adsTitle" class="title">My Ads — Manager</h1>
-            <div class="small-muted">Track your ads: pending → live → rejected. Re-awake or delete ads below.</div>
-          </div>
+  <div class="page">
+    <div class="page-header">
+      <!-- back arrow only (no text) -->
+      <button id="backBtn" class="back-arrow" aria-label="Back">←</button>
+
+      <!-- centered heading -->
+      <h1 class="title">My Ads</h1>
+      <div class="subtitle">Track your ads — pending → live → rejected. Re-awake or delete ads below.</div>
+
+      <!-- controls (search + refresh) and tabs in a single centered column -->
+      <div class="controls-row">
+        <div class="controls">
+          <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
+          <button id="refreshBtn" class="btn refresh">Refresh</button>
         </div>
 
-        <div style="display:flex;flex-direction:column;align-items:flex-end;">
-          <div class="controls" style="margin-bottom:8px">
-            <input id="searchQ" type="search" placeholder="Search title or location..." class="small-input" />
-            <button id="refreshBtn" class="btn view">Refresh</button>
-          </div>
-          <div class="tabs" role="tablist" aria-label="Ad status filters">
-            <div class="tab active" data-filter="all">All</div>
-            <div class="tab" data-filter="pending">Pending</div>
-            <div class="tab" data-filter="live">Live</div>
-            <div class="tab" data-filter="rejected">Rejected</div>
-          </div>
+        <div class="tabs" role="tablist" aria-label="Ad status filters">
+          <div class="tab active" data-filter="all">All</div>
+          <div class="tab" data-filter="pending">Pending</div>
+          <div class="tab" data-filter="live">Live</div>
+          <div class="tab" data-filter="rejected">Rejected</div>
         </div>
       </div>
+    </div>
+
+    <main class="card wrap-inside" aria-labelledby="adsTitle">
+      <h2 id="adsTitle" style="display:none">Ads container</h2>
 
       <div id="adsGrid" class="grid" aria-live="polite"></div>
       <div id="empty" class="empty" style="display:none">You have no ads yet.</div>
@@ -104,13 +151,11 @@
   </div>
 
 <script>
-/* ===== FIXED BACKEND BASE (important) =====
-   Do NOT use location.origin here — GitHub Pages would point to github.io.
-   Point explicitly to your Render backend.
+/* JS adapted from your previous file but simplified for the new layout.
+   Uses the same API endpoints so it should plug in to your backend.
 */
-const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com';
-
-const USER_KEY = 'wire_user_v1';
+const BACKEND_BASE = location.origin || '';
+const USER_KEY = 'wire_user_v1'; // keep your existing storage key
 
 function readUser(){ try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch(e){ return null; } }
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
@@ -120,11 +165,14 @@ const emptyEl = document.getElementById('empty');
 const refreshBtn = document.getElementById('refreshBtn');
 const searchQ = document.getElementById('searchQ');
 const tabEls = Array.from(document.querySelectorAll('.tab'));
+const backBtn = document.getElementById('backBtn');
 
-let currentFilter = 'all'; // all | pending | live | rejected
+let currentFilter = 'all';
+let lastAdsCache = [];
 
 refreshBtn.addEventListener('click', ()=> loadAds());
-searchQ.addEventListener('input', debounce(()=> renderAds(lastAdsCache), 250));
+searchQ.addEventListener('input', debounce(()=> renderAds(lastAdsCache), 200));
+backBtn.addEventListener('click', ()=> window.history.back());
 
 tabEls.forEach(t => t.addEventListener('click', (ev)=>{
   tabEls.forEach(x=>x.classList.remove('active'));
@@ -133,48 +181,7 @@ tabEls.forEach(t => t.addEventListener('click', (ev)=>{
   loadAds();
 }));
 
-// debounce helper
 function debounce(fn, ms=200){ let to; return (...a)=>{ clearTimeout(to); to = setTimeout(()=>fn(...a), ms); }; }
-
-let lastAdsCache = [];
-
-async function loadAds(){
-  const u = readUser();
-  adsGrid.innerHTML = '<div style="grid-column:1/-1" class="center muted-note">Loading...</div>';
-  try {
-    let url;
-    const statusMap = { pending: 'pending_verification', live: 'live', rejected: 'removed' };
-    if (u && u.id) {
-      // my ads endpoint (returns all my ads)
-      url = `${BACKEND_BASE}/api/my/ads?user_id=${encodeURIComponent(u.id)}`;
-    } else {
-      // show public ads endpoint; filter by status if not 'all'
-      if (currentFilter === 'all') url = `${BACKEND_BASE}/api/ads`;
-      else url = `${BACKEND_BASE}/api/ads?status=${encodeURIComponent(statusMap[currentFilter] || currentFilter)}`;
-    }
-
-    const res = await fetch(url, { credentials: 'include' });
-    const json = await res.json().catch(()=>null);
-
-    if (!res.ok || !json || !json.success) {
-      // fallback to empty
-      adsGrid.innerHTML = '';
-      emptyEl.style.display = 'block';
-      emptyEl.textContent = 'No ads found or server unreachable.';
-      lastAdsCache = [];
-      return;
-    }
-    const ads = Array.isArray(json.ads) ? json.ads : [];
-    lastAdsCache = ads;
-    renderAds(ads);
-  } catch (e) {
-    console.error('loadAds', e);
-    adsGrid.innerHTML = '';
-    emptyEl.style.display = 'block';
-    emptyEl.textContent = 'Network error fetching ads.';
-    lastAdsCache = [];
-  }
-}
 
 function computeExpiry(createdAtIso) {
   try {
@@ -250,7 +257,7 @@ function renderAds(ads){
     el.innerHTML = `
       <div class="ad-media"><img src="${escapeHtml(img)}" alt="" onerror="this.src='https://i.postimg.cc/hv4h8YSs/placeholder.png'"></div>
       <div class="ad-body">
-        <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="ad-top" style="justify-content:space-between">
           <div style="flex:1">
             <div class="ad-title">${escapeHtml(ad.title || 'Untitled')}</div>
             <div class="ad-desc">${escapeHtml(String(ad.description||'').slice(0,160))}</div>
@@ -275,13 +282,47 @@ function renderAds(ads){
     `;
     adsGrid.appendChild(el);
 
-    // wire buttons
+    // actions
     el.querySelectorAll('.btn-delete').forEach(b=> b.addEventListener('click', ()=> deleteAd(ad)));
     el.querySelectorAll('.btn-offline').forEach(b=> b.addEventListener('click', ()=> setAdStatus(ad,'offline')));
     el.querySelectorAll('.btn-online').forEach(b=> b.addEventListener('click', ()=> setAdStatus(ad,'live')));
     el.querySelectorAll('.btn-reawke').forEach(b=> b.addEventListener('click', ()=> reawkeAd(ad)));
     el.querySelectorAll('.btn-view').forEach(b=> b.addEventListener('click', ()=> openView(ad)));
   });
+}
+
+async function loadAds(){
+  const u = readUser();
+  adsGrid.innerHTML = '<div style="grid-column:1/-1" class="empty">Loading...</div>';
+  try {
+    let url;
+    const statusMap = { pending: 'pending_verification', live: 'live', rejected: 'removed' };
+    if (u && u.id) {
+      url = `${BACKEND_BASE}/api/my/ads?user_id=${encodeURIComponent(u.id)}`;
+    } else {
+      if (currentFilter === 'all') url = `${BACKEND_BASE}/api/ads`;
+      else url = `${BACKEND_BASE}/api/ads?status=${encodeURIComponent(statusMap[currentFilter] || currentFilter)}`;
+    }
+
+    const res = await fetch(url, { credentials: 'include' });
+    const json = await res.json().catch(()=>null);
+    if (!res.ok || !json || !json.success) {
+      adsGrid.innerHTML = '';
+      emptyEl.style.display = 'block';
+      emptyEl.textContent = 'No ads found or server unreachable.';
+      lastAdsCache = [];
+      return;
+    }
+    const ads = Array.isArray(json.ads) ? json.ads : [];
+    lastAdsCache = ads;
+    renderAds(ads);
+  } catch (e) {
+    console.error('loadAds', e);
+    adsGrid.innerHTML = '';
+    emptyEl.style.display = 'block';
+    emptyEl.textContent = 'Network error fetching ads.';
+    lastAdsCache = [];
+  }
 }
 
 async function deleteAd(ad) {
@@ -349,7 +390,6 @@ async function reawkeAd(ad) {
     });
     const j = await res.json().catch(()=>null);
     if (res.ok && j && j.success && j.init) {
-      // try to find redirect url inside j.init
       const init = j.init;
       let redirectUrl = null;
       if (init.data) redirectUrl = init.data.authorization_url || init.data.link || init.data.checkout_url || init.data.authorization_url;
