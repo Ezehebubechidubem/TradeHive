@@ -903,25 +903,14 @@ app.post('/api/ads/:id/buy', async (req, res) => {
 /////////////////////////////////////////////////////////////////////
 // VERIFY & CALLBACK HANDLER (robust + safe)
 // Replaces earlier fragile version. Accepts req,res directly.
-/////////////////////////////////////////////////////////////////////
-// Replace your existing verifyAndProcessProviderPayment with this improved version.
-// Requires: pool, uid, safeJsonParse, initializePayment, TMP_ADS_DIR, cloudinary, cloudinaryPublicUrl, fs, path, sendEmail, PAYMENT_PROVIDER
-
+// paste this replacement function into server.js (overwrite existing verifyAndProcessProviderPayment)
 async function verifyAndProcessProviderPayment(req, res) {
   try {
     const rawQuery = req.query || {};
     const provider = (rawQuery.provider || process.env.PAYMENT_PROVIDER || 'paystack').toString().toLowerCase();
 
-    // accept common param names
     const tx_ref = rawQuery.tx_ref || rawQuery.txref || rawQuery.txReference || rawQuery.reference || rawQuery.tx || null;
-    let transaction_id =
-      rawQuery.transaction_id ||
-      rawQuery.transactionId ||
-      rawQuery.transaction ||
-      rawQuery.id ||
-      rawQuery.flw_ref ||
-      rawQuery.flutterwave_transaction_id ||
-      null;
+    let transaction_id = rawQuery.transaction_id || rawQuery.transactionId || rawQuery.transaction || rawQuery.id || rawQuery.flw_ref || null;
 
     console.log('--- verify start ---', { provider, tx_ref, transaction_id, rawQuery });
 
@@ -935,7 +924,7 @@ async function verifyAndProcessProviderPayment(req, res) {
         return res.status(500).send('Flutterwave not configured on server.');
       }
 
-      // If provider passed `status` in callback (e.g. ?status=completed) treat accordingly
+      // Many flutterwave integrations return ?status=completed on callback — treat as success if status indicates completed/success
       if (rawQuery.status) {
         const s = String(rawQuery.status).toLowerCase();
         if (s === 'completed' || s === 'successful' || s === 'success') {
@@ -947,7 +936,7 @@ async function verifyAndProcessProviderPayment(req, res) {
         }
       }
 
-      // If we don't already have a verified decision, try to resolve transaction_id from stored provider_init in payments.meta
+      // If no transaction_id provided, attempt to discover it from payments.meta.provider_init
       if (!transaction_id && tx_ref) {
         try {
           const c = await pool.connect();
@@ -968,10 +957,9 @@ async function verifyAndProcessProviderPayment(req, res) {
         }
       }
 
-      // If still no decision, call the flutterwave verify endpoint (if we have transaction_id)
+      // If we haven't already decided based on status, verify using Flutterwave verify endpoint (if we have transaction_id)
       if (!verifyResp || verifyResp.status === undefined) {
         if (!transaction_id) {
-          // no transaction id -> we cannot call flutterwave; mark unverified for now (we'll attempt to locate payments row for cleanup)
           console.warn('Flutterwave callback: transaction_id missing (and not discoverable). Query:', rawQuery);
           verifyResp = { status: 'error', message: 'transaction_id missing' };
           isVerified = false;
@@ -983,7 +971,7 @@ async function verifyAndProcessProviderPayment(req, res) {
           try { verifyResp = await r.json(); } catch(e){ const text = await r.text().catch(()=>null); console.error('Flutterwave verify parse error', e, text); return res.status(500).send('Failed to parse provider response.'); }
           console.log('Flutterwave verify response:', JSON.stringify(verifyResp));
 
-          // Accept 'successful', 'success' or 'completed' as success
+          // Accept 'successful', 'success' OR 'completed' as success
           const statusVal = (verifyResp && verifyResp.data && (verifyResp.data.status || verifyResp.status)) || null;
           if (statusVal) {
             const s = String(statusVal).toLowerCase();
@@ -1019,7 +1007,7 @@ async function verifyAndProcessProviderPayment(req, res) {
         console.warn('Paystack verification returned no usable response', j);
       } else {
         verifyResp = j;
-        // paystack uses boolean `status` and j.data.status
+        // paystack uses boolean `status` and j.data.status string (success)
         isVerified = !!(j.status && j.data && (String(j.data.status).toLowerCase() === 'success' || String(j.data.status).toLowerCase() === 'successful'));
         if (!isVerified) console.warn('Paystack verify did NOT confirm success', j);
       }
@@ -1033,12 +1021,11 @@ async function verifyAndProcessProviderPayment(req, res) {
       return res.status(400).send('Unsupported provider.');
     }
 
-    // ---------- find the matching payments row (robust) ----------
+    // ---------- now find matching payments row ----------
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // candidate identifiers from provider response
       const candidates = new Set();
       if (verifyResp && verifyResp.data) {
         const d = verifyResp.data;
@@ -1055,7 +1042,6 @@ async function verifyAndProcessProviderPayment(req, res) {
       console.log('Candidates for payments lookup:', uniq);
 
       let paymentRow = null;
-      // try exact matches first (fast)
       for (const c of uniq) {
         const q1 = await client.query('SELECT * FROM payments WHERE reference = $1 LIMIT 1', [c]);
         if (q1.rows.length) { paymentRow = q1.rows[0]; break; }
@@ -1065,13 +1051,12 @@ async function verifyAndProcessProviderPayment(req, res) {
         if (q3.rows.length) { paymentRow = q3.rows[0]; break; }
       }
 
-      // fallback tries if not found: provider_init.reference or meta text contains tx_ref fragment
+      // fallback: provider_init.reference
       if (!paymentRow && tx_ref) {
         const qf = await client.query("SELECT * FROM payments WHERE meta->'provider_init'->>'reference' = $1 LIMIT 1", [tx_ref]);
         if (qf.rows.length) paymentRow = qf.rows[0];
       }
       if (!paymentRow && tx_ref) {
-        // broader fallback - look for tx_ref inside meta text (slow, for debugging only)
         const pattern = `%${tx_ref}%`;
         const qf2 = await client.query("SELECT * FROM payments WHERE meta::text ILIKE $1 LIMIT 1", [pattern]);
         if (qf2.rows.length) paymentRow = qf2.rows[0];
@@ -1080,7 +1065,6 @@ async function verifyAndProcessProviderPayment(req, res) {
       if (!paymentRow) {
         await client.query('ROLLBACK');
         console.warn('No matching payment found for verified txn. Candidates:', uniq);
-        // give a more informative HTTP message to client
         return res.status(404).send('Payment verified with provider but matching payment record not found on server. Check payments table for stored tx_ref or reference.');
       }
 
@@ -1092,12 +1076,12 @@ async function verifyAndProcessProviderPayment(req, res) {
         return res.send(`<h2>Payment already processed</h2><p>Payment id ${paymentRow.id} was already processed.</p>`);
       }
 
-      // ensure meta is object
+      // parse meta
       let metaObj = paymentRow.meta;
       if (typeof metaObj === 'string') metaObj = safeJsonParse(metaObj) || {};
       if (!metaObj || typeof metaObj !== 'object') metaObj = {};
 
-      // ---------- FAILURE: mark failed and delete unpaid ad (per your preference) ----------
+      // ---------- failure handling: mark payment failed and delete ad (per your request) ----------
       if (!isVerified) {
         await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['failed', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
 
@@ -1107,11 +1091,11 @@ async function verifyAndProcessProviderPayment(req, res) {
             console.log('Deleted unpaid ad:', paymentRow.ad_id);
           } catch (e) {
             console.warn('Failed to delete unpaid ad', paymentRow.ad_id, e && e.message ? e.message : e);
-            try { await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', ['payment_failed', paymentRow.ad_id]); } catch(_) {}
+            try { await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['payment_failed', paymentRow.ad_id]); } catch(_) {}
           }
         }
 
-        // cleanup temp images if any
+        // cleanup tmp images if any
         const tmpImgs = (metaObj && metaObj.temp_images && Array.isArray(metaObj.temp_images)) ? metaObj.temp_images.slice() : [];
         for (const t of tmpImgs) {
           try {
@@ -1137,9 +1121,10 @@ async function verifyAndProcessProviderPayment(req, res) {
         try { return res.redirect(302, finalUrl); } catch (e) { return res.send(`<h2>Payment failed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue</a></p>`); }
       }
 
-      // ---------- SUCCESS: mark payment success, create ad if needed, transfer images ----------
+      // ---------- success handling ----------
       await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['success', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
 
+      // create ad if ad_id is not set (we stashed temp_ad in payment.meta earlier)
       let adIdToUse = paymentRow.ad_id;
       if (!adIdToUse) {
         const temp = (metaObj && metaObj.temp_ad && typeof metaObj.temp_ad === 'object') ? metaObj.temp_ad : null;
@@ -1170,10 +1155,10 @@ async function verifyAndProcessProviderPayment(req, res) {
           console.warn('No temp_ad found in payment.meta — cannot create ad. PaymentRow:', paymentRow.id);
         }
       } else {
-        await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', ['pending_verification', adIdToUse]);
+        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', adIdToUse]);
       }
 
-      // transfer images (cloudinary or local tmp)
+      // transfer images (cloudinary/local tmp)
       const tempImgs = (metaObj && metaObj.temp_images && Array.isArray(metaObj.temp_images)) ? metaObj.temp_images.slice() : [];
       const finalImages = [];
       for (const t of tempImgs) {
@@ -1207,10 +1192,10 @@ async function verifyAndProcessProviderPayment(req, res) {
       }
 
       if (finalImages.length && adIdToUse) {
-        await client.query('UPDATE ads SET images=$1, updated_at=now() WHERE id=$2', [finalImages, adIdToUse]);
+        await client.query('UPDATE ads SET images=$1 WHERE id=$2', [finalImages, adIdToUse]);
       }
 
-      // notify seller/admin
+      // notifications (best-effort)
       try {
         const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
         if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${adIdToUse || ''} fee was received; admin will review.` });
@@ -1220,9 +1205,9 @@ async function verifyAndProcessProviderPayment(req, res) {
         try { await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${adIdToUse || ''} paid and requires review.` }); } catch(e){ console.warn('sendEmail admin failed', e && e.message ? e.message : e); }
       }
 
-      // order finalization unchanged
+      // order finalization (unchanged)
       if (paymentRow.order_id) {
-        await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', paymentRow.order_id]);
+        await client.query('UPDATE orders SET status=$1 WHERE id=$2', ['paid', paymentRow.order_id]);
         const order = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [paymentRow.order_id])).rows[0];
         if (order) {
           try { const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [order.seller_id])).rows[0]; if (seller) await sendEmail({ to: seller.email || seller.username, subject: `Order ${paymentRow.order_id} has been paid`, text: `Order ${paymentRow.order_id} was paid. Qty: ${order.qty}. Amount: ${order.amount}.` }); } catch(e){ console.warn('sendEmail seller (order) failed', e && e.message ? e.message : e); }
@@ -1232,7 +1217,7 @@ async function verifyAndProcessProviderPayment(req, res) {
 
       await client.query('COMMIT');
 
-      // redirect to ads page with success params
+      // redirect back to frontend ads page (success)
       const FRONTEND_BASE = process.env.FRONTEND_BASE || '';
       let redirectTo = '';
       if (paymentRow.order_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/myorders.html' : '/myorders.html';
@@ -1253,7 +1238,6 @@ async function verifyAndProcessProviderPayment(req, res) {
     }
   } catch (err) {
     console.error('verifyAndProcessProviderPayment error', err && err.stack ? err.stack : err);
-    // provide more informative message to caller (and log)
     return res.status(500).send('Error processing verification — check server logs for details.');
   }
 }
