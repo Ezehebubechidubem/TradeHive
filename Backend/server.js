@@ -691,77 +691,85 @@ app.get('/', (req,res)=> res.send('TradeHive backend running'));
 // ADS routes: create ad (idempotent style) - registers ad + payment
 /////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------
-// Ads creation route (idempotent) — DO NOT insert ad into ads table here.
-// Save the ad draft in payments.meta.draft_ad and create/init payment only.
-// ---------------------------------------------------------------------
+// Ads creation route (idempotent style) - register payment and stash ad payload (no ads row yet)
 app.post('/api/ads', async (req, res) => {
   try {
     const { seller_id, title, description, images, price, currency, quantity, location, category, subcategory, idempotency_key } = req.body || {};
+
     if (!seller_id || !title || !price) {
       return res.status(400).json({ success:false, message:'seller_id, title, price required' });
     }
 
     const client = await pool.connect();
-
     try {
-      await client.query('BEGIN'); // ✅ START TRANSACTION
+      // ensure seller exists (avoid FK violation)
+      const sellerQ = await client.query('SELECT id,email FROM users WHERE id=$1 LIMIT 1', [seller_id]);
+      if (!sellerQ.rows.length) {
+        return res.status(401).json({ success:false, message:'Invalid seller_id — please sign in' });
+      }
+      const sellerRow = sellerQ.rows[0];
 
+      // idempotency: if idempotency_key exists, look for existing payments with that key
       if (idempotency_key) {
         const prev = (await client.query(
-          "SELECT p.id as payment_id, a.id as ad_id FROM payments p JOIN ads a ON p.ad_id=a.id WHERE p.meta->>'idempotency_key' = $1 LIMIT 1",
+          "SELECT p.id as payment_id, p.ad_id as ad_id FROM payments p WHERE p.meta->>'idempotency_key' = $1 LIMIT 1",
           [idempotency_key]
         )).rows[0];
-
-        if (prev) {
-          await client.query('COMMIT');
-          return res.json({ success:true, adId: prev.ad_id, paymentId: prev.payment_id, note:'idempotent-return' });
-        }
+        if (prev) return res.json({ success:true, adId: prev.ad_id, paymentId: prev.payment_id, note:'idempotent-return' });
       }
 
-      const adId = uid();
-
-      await client.query(
-        'INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-        [
-          adId,
-          seller_id,
-          title,
-          description || '',
-          Array.isArray(images) ? images : [],
-          price,
-          currency || 'NGN',
-          quantity || 1,
-          location || '',
-          category || '',
-          subcategory || '',
-          'awaiting_payment' // ✅ correct flow
-        ]
-      );
+      // build temp_ad payload (store what we need later when payment verifies)
+      const tempAd = {
+        seller_id,
+        title,
+        description: description || '',
+        images: Array.isArray(images) ? images : [],
+        price,
+        currency: currency || 'NGN',
+        quantity: quantity || 1,
+        location: location || '',
+        category: category || '',
+        subcategory: subcategory || '',
+        created_at: (new Date()).toISOString()
+      };
 
       const paymentId = uid();
       const adFee = Number(process.env.AD_FEE_NGN || 1000);
       const tx_ref = `th_ad_${uid()}_${Date.now()}`;
-      const meta = { type:'ad_fee', adId, paymentId, idempotency_key: idempotency_key || null, tx_ref };
+
+      const meta = {
+        type: 'ad_fee',
+        // do NOT set adId yet (we'll create ad after payment verification)
+        adId: null,
+        paymentId,
+        idempotency_key: idempotency_key || null,
+        tx_ref,
+        temp_ad: tempAd,
+        temp_images: Array.isArray(images) ? images : []
+      };
 
       await client.query(
         'INSERT INTO payments (id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-        [paymentId, adId, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)]
+        [paymentId, null, seller_id, PAYMENT_PROVIDER, adFee, currency || 'NGN', 'initiated', tx_ref, JSON.stringify(meta)]
       );
 
-      await client.query('COMMIT'); // ✅ SAVE EVERYTHING
+      // initialize provider payment (flutterwave / paystack etc)
+      const email = sellerRow.email || `seller_${seller_id}@example.com`;
+      const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/ad-callback';
+      const initResp = await initializePayment({ provider: PAYMENT_PROVIDER, email, amount: adFee, metadata: { ...meta, email }, currency: currency || 'NGN', callback_url: callback });
 
-      return res.json({ success:true, adId, paymentId });
+      // store provider init in payments.meta, and update reference if provider gave one
+      if (initResp && (initResp.data || initResp.session)) {
+        const prov = initResp.data || initResp.session;
+        await client.query("UPDATE payments SET meta = coalesce(meta, '{}'::jsonb) || $1 WHERE id=$2", [JSON.stringify({ provider_init: prov }), paymentId]);
+        const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
+        if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
+      }
 
-    } catch (err) {
-      await client.query('ROLLBACK'); // ✅ if anything fails
-      console.error('/api/ads error', err);
-      return res.status(500).json({ success:false, message:'Server error' });
-    } finally {
-      client.release();
-    }
-
+      return res.json({ success:true, paymentId, init: initResp, note:'payment-created-temp_ad-stashed' });
+    } finally { client.release(); }
   } catch (err) {
-    console.error('/api/ads outer error', err);
+    console.error('/api/ads error', err && err.stack ? err.stack : err);
     return res.status(500).json({ success:false, message:'Server error' });
   }
 });
