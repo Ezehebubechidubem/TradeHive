@@ -890,6 +890,9 @@ app.post('/api/ads/:id/buy', async (req, res) => {
 // VERIFY & CALLBACK HANDLER (robust + safe)
 // Replaces earlier fragile version. Accepts req,res directly.
 /////////////////////////////////////////////////////////////////////
+// verifyAndProcessProviderPayment (updated)
+// Accepts req so it can read query params and perform provider verification,
+// then finds the payment record and finalizes ad/order flows.
 async function verifyAndProcessProviderPayment(req, res) {
   try {
     const rawQuery = req.query || {};
@@ -902,13 +905,14 @@ async function verifyAndProcessProviderPayment(req, res) {
 
     let verifyResp = null;
 
+    // --- provider verification ---
     if (provider === 'flutterwave') {
       if (!process.env.FLUTTERWAVE_SECRET_KEY) {
         console.warn('Flutterwave not configured on server.');
         return res.status(500).send('Flutterwave not configured on server.');
       }
 
-      // if transaction_id not provided, try to resolve from payments.meta.provider_init stored earlier
+      // attempt to resolve transaction_id via payments.meta.provider_init if missing
       if (!transaction_id && tx_ref) {
         try {
           const c = await pool.connect();
@@ -945,6 +949,7 @@ async function verifyAndProcessProviderPayment(req, res) {
         console.warn('Flutterwave verify failed', verifyResp);
         return res.status(400).send('Flutterwave verification failed.');
       }
+
     } else if (provider === 'paystack') {
       if (!process.env.PAYSTACK_SECRET_KEY) {
         console.warn('Paystack not configured on server.');
@@ -963,17 +968,19 @@ async function verifyAndProcessProviderPayment(req, res) {
       console.log('Paystack verify response:', j);
       if (!j || !j.status) { console.warn('Paystack verify failed', j); return res.status(400).send('Paystack verification failed.'); }
       verifyResp = j;
+
     } else if (provider === 'stripe') {
+      // minimal handling for stripe redirect (webhooks preferred)
       verifyResp = { data: rawQuery || {} };
     } else {
       return res.status(400).send('Unsupported provider.');
     }
 
+    // --- find matching paymentRow in DB ---
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // build candidate identifiers
       const candidates = new Set();
       if (verifyResp && verifyResp.data) {
         const d = verifyResp.data;
@@ -997,7 +1004,8 @@ async function verifyAndProcessProviderPayment(req, res) {
         const q3 = await client.query("SELECT * FROM payments WHERE (meta->>'paymentId' = $1 OR meta->>'orderId' = $1 OR meta->>'adId' = $1 OR meta->>'tx_ref' = $1) LIMIT 1", [c]);
         if (q3.rows.length) { paymentRow = q3.rows[0]; break; }
       }
-// fallback: provider_init.reference
+
+      // fallback: provider_init.reference stored earlier
       if (!paymentRow && tx_ref) {
         const qf = await client.query("SELECT * FROM payments WHERE meta->'provider_init'->>'reference' = $1 LIMIT 1", [tx_ref]);
         if (qf.rows.length) paymentRow = qf.rows[0];
@@ -1016,20 +1024,53 @@ async function verifyAndProcessProviderPayment(req, res) {
         return res.send(`<h2>Payment already processed</h2><p>Payment id ${paymentRow.id} was already processed.</p>`);
       }
 
-      // ensure meta is parsed object (guard against string)
+      // parse meta safely
       let metaObj = paymentRow.meta;
-      if (typeof metaObj === 'string') {
-        metaObj = safeJsonParse(metaObj) || {};
-      }
+      if (typeof metaObj === 'string') metaObj = (typeof safeJsonParse === 'function') ? safeJsonParse(metaObj) || {} : (JSON.parse(metaObj || '{}') || {});
       if (!metaObj || typeof metaObj !== 'object') metaObj = {};
 
-      // update payments.status to success and append provider_verify info
+      // mark payment as success and append verify payload
       await client.query("UPDATE payments SET status=$1, meta = coalesce(meta, '{}'::jsonb) || $2 WHERE id=$3", ['success', JSON.stringify({ provider_verify: verifyResp }), paymentRow.id]);
 
-      // AD finalization
+      // --- AD finalization: create ad row if missing, finalize images and notify ---
       if (paymentRow.ad_id) {
-        await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]);
+        // If ad row doesn't exist yet, attempt to create from meta.adPayload
+        const existingAdQ = await client.query('SELECT id FROM ads WHERE id=$1 LIMIT 1', [paymentRow.ad_id]);
+        if (!existingAdQ.rows.length) {
+          const adPayload = metaObj && metaObj.adPayload ? metaObj.adPayload : null;
+          if (adPayload && adPayload.id) {
+            try {
+              await client.query(
+                'INSERT INTO ads (id, seller_id, title, description, images, price, currency, quantity, location, category, subcategory, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())',
+                [
+                  adPayload.id,
+                  adPayload.seller_id,
+                  adPayload.title || '',
+                  adPayload.description || '',
+                  Array.isArray(adPayload.images) ? adPayload.images : [],
+                  adPayload.price || 0,
+                  adPayload.currency || 'NGN',
+                  adPayload.quantity || 1,
+                  adPayload.location || '',
+                  adPayload.category || '',
+                  adPayload.subcategory || '',
+                  'pending_verification'
+                ]
+              );
+              console.log('Created ad row from payments.meta.adPayload for ad_id', paymentRow.ad_id);
+            } catch (insErr) {
+              console.warn('Failed to insert ad from adPayload', insErr && insErr.message ? insErr.message : insErr);
+            }
+          } else {
+            // If no adPayload, do not create ad (log and continue). This prevents ads appearing without a verified payment.
+            console.warn('No adPayload in payment.meta — ad row not created for', paymentRow.ad_id);
+          }
+        } else {
+          // ensure status is pending_verification (admin to review)
+          try { await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['pending_verification', paymentRow.ad_id]); } catch(e){ console.warn('Failed to set ad status pending_verification', e && e.message ? e.message : e); }
+        }
 
+        // finalize images (temp_images -> cloud or local)
         const tempImgs = (metaObj && metaObj.temp_images && Array.isArray(metaObj.temp_images)) ? metaObj.temp_images.slice() : [];
         const finalImages = [];
 
@@ -1038,13 +1079,18 @@ async function verifyAndProcessProviderPayment(req, res) {
           if (typeof t === 'string' && (t.startsWith('http://') || t.startsWith('https://'))) { finalImages.push(t); continue; }
           if (cloudinary && typeof t === 'string' && !t.includes('/') && !t.startsWith('tmp-')) { finalImages.push(cloudinaryPublicUrl(t) || t); continue; }
           if (typeof t === 'string' && t.startsWith('tmp-')) {
-            const tmpPath = path.join(TMP_ADS_DIR, t);
+            const tmpPath = typeof TMP_ADS_DIR === 'string' ? path.join(TMP_ADS_DIR, t) : path.join(process.cwd(), 'uploads', 'tmp_ads', t);
             if (fs.existsSync(tmpPath)) {
               if (cloudinary) {
                 try {
                   const ext = path.extname(tmpPath).toLowerCase();
                   const resource_type = ['.mp4','.mov','.webm','.ogg'].includes(ext) ? 'video' : 'image';
-                  const uploadRes = await cloudinary.uploader.upload(tmpPath, { folder: resource_type === 'video' ? 'tradehive/ads/videos' : 'tradehive/ads/images', resource_type, type: 'upload', public_id: `ad-${Date.now()}-${Math.floor(Math.random()*90000)}` });
+                  const uploadRes = await cloudinary.uploader.upload(tmpPath, {
+                    folder: resource_type === 'video' ? 'tradehive/ads/videos' : 'tradehive/ads/images',
+                    resource_type,
+                    type: 'upload',
+                    public_id: `ad-${Date.now()}-${Math.floor(Math.random()*90000)}`
+                  });
                   if (uploadRes && uploadRes.secure_url) finalImages.push(uploadRes.secure_url);
                   else if (uploadRes && uploadRes.public_id) finalImages.push(cloudinaryPublicUrl(uploadRes.public_id) || uploadRes.public_id);
                 } catch (ue) {
@@ -1064,20 +1110,20 @@ async function verifyAndProcessProviderPayment(req, res) {
         }
 
         if (finalImages.length) {
-          await client.query('UPDATE ads SET images=$1, updated_at=now() WHERE id=$2', [finalImages, paymentRow.ad_id]);
+          try { await client.query('UPDATE ads SET images=$1, updated_at=now() WHERE id=$2', [finalImages, paymentRow.ad_id]); } catch(e){ console.warn('Failed to update ads.images', e && e.message ? e.message : e); }
         }
 
+        // notify seller/admin
         try {
           const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [paymentRow.user_id])).rows[0];
           if (sellerRow) await sendEmail({ to: sellerRow.email || sellerRow.username, subject: 'Ad fee received — pending admin verification', text: `Your ad ${paymentRow.ad_id} fee was received; admin will review.` });
         } catch (e) { console.warn('sendEmail (ad) failed', e && e.message ? e.message : e); }
-
         if (process.env.ADMIN_EMAIL) {
           try { await sendEmail({ to: process.env.ADMIN_EMAIL, subject: 'New ad pending verification', text: `Ad ${paymentRow.ad_id} paid and requires review.` }); } catch(e){ console.warn('sendEmail admin failed', e && e.message ? e.message : e); }
         }
-      }
+      } // end ad finalization
 
-      // ORDER finalization
+      // --- ORDER finalization (unchanged) ---
       if (paymentRow.order_id) {
         await client.query('UPDATE orders SET status=$1, updated_at=now() WHERE id=$2', ['paid', paymentRow.order_id]);
         const order = (await client.query('SELECT * FROM orders WHERE id=$1 LIMIT 1', [paymentRow.order_id])).rows[0];
@@ -1089,7 +1135,7 @@ async function verifyAndProcessProviderPayment(req, res) {
 
       await client.query('COMMIT');
 
-      // Build redirect
+      // Build redirect as before
       const FRONTEND_BASE = process.env.FRONTEND_BASE || '';
       let redirectTo = '';
       if (paymentRow.order_id) redirectTo = FRONTEND_BASE ? FRONTEND_BASE.replace(/\/$/, '') + '/myorders.html' : '/myorders.html';
@@ -1105,6 +1151,7 @@ async function verifyAndProcessProviderPayment(req, res) {
 
       try { return res.redirect(302, finalUrl); }
       catch (e) { console.warn('Redirect failed, returning HTML link', e && e.message ? e.message : e); return res.send(`<h2>Payment verified and processed</h2><p>payment id: ${paymentRow.id}</p><p><a href="${finalUrl}">Continue</a></p>`); }
+
     } finally { client.release(); }
   } catch (err) {
     console.error('verifyAndProcessProviderPayment error', err && err.stack ? err.stack : err);
@@ -1112,16 +1159,17 @@ async function verifyAndProcessProviderPayment(req, res) {
   }
 }
 
+// route wrappers (unchanged)
 app.get('/pay/ad-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
 app.get('/pay/order-callback', (req, res) => verifyAndProcessProviderPayment(req, res));
-// make ads live//
+
+// debug: make all ads live for a given seller id (keeps your debug route)
 app.get('/debug/make-live', async (req, res) => {
   try {
     await pool.query(
       "UPDATE ads SET status = 'live' WHERE seller_id = $1",
       ['1377792842']
     );
-
     res.json({ success: true, message: 'All ads set to live' });
   } catch (err) {
     console.error(err);
