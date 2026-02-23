@@ -146,7 +146,7 @@
   </div>
 
 <script>
-/* Admin verify page (updated to hit /api/admin/ads) */
+/* Admin verify page (updated to prefer admin approve/decline endpoints) */
 
 const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com';
 
@@ -206,7 +206,7 @@ function showToast(msg, ms=1800){
   setTimeout(()=>el.remove(), ms);
 }
 
-// fetchers (now hitting /api/admin/ads)
+// fetchers (via /api/admin/ads)
 async function fetchPending(){
   pendingList.innerHTML = '<div class="small muted-note">Loading pending ads...</div>';
   pendingEmpty.style.display='none';
@@ -361,34 +361,119 @@ function setSelected(ad){
   deleteSelBtn.disabled = false;
 }
 
+/*
+  new: prefer direct admin endpoints for approve/decline:
+    POST /admin/ads/:id/approve
+    POST /admin/ads/:id/decline  (body { reason })
+  If admin endpoint fails, we fall back to updateStatusWithFallback (which you already use elsewhere).
+*/
+
+// prefer admin approve
 async function doApprove(ad){
   if (!confirm(`Approve "${ad.title}" and make it live?`)) return;
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/approve`, { method:'POST', credentials:'include' });
+    if (r.ok) {
+      showToast('Ad approved');
+      await refreshAll();
+      return;
+    }
+    // fallback to generic update
+    console.warn('Admin approve returned non-ok, falling back', r.status);
+  } catch(e){
+    console.warn('Admin approve failed, fallback', e);
+  }
+  // fallback
   await updateStatusWithFallback(ad.id, 'live');
   await refreshAll();
-  showToast('Ad approved');
+  showToast('Ad approved (fallback)');
 }
 
+// prefer admin decline
 async function doDecline(ad){
   if (!confirm(`Decline "${ad.title}" (mark as rejected)?`)) return;
+  const reason = prompt('Optional reason for decline (leave blank for none):') || '';
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/decline`, {
+      method:'POST',
+      credentials:'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ reason })
+    });
+    if (r.ok) {
+      showToast('Ad declined');
+      await refreshAll();
+      return;
+    }
+    console.warn('Admin decline returned non-ok, falling back', r.status);
+  } catch(e){
+    console.warn('Admin decline failed, fallback', e);
+  }
+  // fallback
   await updateStatusWithFallback(ad.id, 'removed');
   await refreshAll();
-  showToast('Ad declined');
+  showToast('Ad declined (fallback)');
 }
 
 async function confirmDelete(ad){
   if (!confirm(`Permanently DELETE ad "${ad.title}"? This is irreversible.`)) return;
-  const ok = await deleteWithFallback(ad.id);
-  if (ok) {
-    await refreshAll();
-    showToast('Ad deleted');
-  } else {
-    alert('Delete failed. See console.');
-  }
+  // try admin permanent delete first
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}`, { method:'DELETE', credentials:'include' });
+    if (r.ok) { showToast('Deleted'); await refreshAll(); return; }
+  } catch(e){ /* ignore */ }
+  // fallback to marking removed (soft)
+  const ok = await updateStatusWithFallback(ad.id, 'removed');
+  if (ok) { await refreshAll(); showToast('Deleted (soft)'); } else alert('Delete failed');
 }
 
+// fallback
+  await updateStatusWithFallback(ad.id, 'live');
+  await refreshAll();
+  showToast('Ad approved (fallback)');
+}
+
+// prefer admin decline
+async function doDecline(ad){
+  if (!confirm(`Decline "${ad.title}" (mark as rejected)?`)) return;
+  const reason = prompt('Optional reason for decline (leave blank for none):') || '';
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/decline`, {
+      method:'POST',
+      credentials:'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ reason })
+    });
+    if (r.ok) {
+      showToast('Ad declined');
+      await refreshAll();
+      return;
+    }
+    console.warn('Admin decline returned non-ok, falling back', r.status);
+  } catch(e){
+    console.warn('Admin decline failed, fallback', e);
+  }
+  // fallback
+  await updateStatusWithFallback(ad.id, 'removed');
+  await refreshAll();
+  showToast('Ad declined (fallback)');
+}
+
+async function confirmDelete(ad){
+  if (!confirm(`Permanently DELETE ad "${ad.title}"? This is irreversible.`)) return;
+  // try admin permanent delete first
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}`, { method:'DELETE', credentials:'include' });
+    if (r.ok) { showToast('Deleted'); await refreshAll(); return; }
+  } catch(e){ /* ignore */ }
+  // fallback to marking removed (soft)
+  const ok = await updateStatusWithFallback(ad.id, 'removed');
+  if (ok) { await refreshAll(); showToast('Deleted (soft)'); } else alert('Delete failed');
+}
+
+// fallback updateStatusWithFallback (keeps your previous behavior)
 async function updateStatusWithFallback(adId, statusVal){
   try {
-    // preferred: PATCH /api/ads/:id with body { status }
     const resp = await fetch(`${BACKEND_BASE}/api/ads/${encodeURIComponent(adId)}/status`, {
       method:'PATCH',
       headers:{'Content-Type':'application/json'},
@@ -397,10 +482,22 @@ async function updateStatusWithFallback(adId, statusVal){
     });
     if (resp.ok) return true;
 
-    // fallback to marking removed
-    return await updateStatusWithFallback(adId, 'removed');
+    // fallback to admin endpoints if PATCH fails
+    if (statusVal === 'live') {
+      const urls = [`${BACKEND_BASE}/admin/ads/${adId}/approve`, `${BACKEND_BASE}/api/admin/ads/${adId}/approve`];
+      for (const u of urls){
+        try { const r = await fetch(u, { method:'POST', credentials:'include' }); if (r.ok) return true; } catch(e){}
+      }
+    } else {
+      const urls = [`${BACKEND_BASE}/admin/ads/${adId}/decline`, `${BACKEND_BASE}/api/admin/ads/${adId}/decline`];
+      for (const u of urls){
+        try { const r = await fetch(u, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reason: 'admin decline' })}); if (r.ok) return true; } catch(e){}
+      }
+    }
+    console.error('updateStatusWithFallback failed', resp.status, await resp.text().catch(()=>null));
+    return false;
   } catch (e){
-    console.error('deleteWithFallback error', e);
+    console.error('updateStatusWithFallback error', e);
     return false;
   }
 }
@@ -434,43 +531,45 @@ modalBackdrop.addEventListener('click', (e)=> { if (e.target === modalBackdrop) 
 
 async function modalActionApprove(ad){
   if (!confirm('Approve this ad?')) return;
-  await updateStatusWithFallback(ad.id, 'live');
+  await doApprove(ad);
   modalBackdrop.style.display='none';
-  await refreshAll();
-  showToast('Ad approved');
-}
-async function modalActionDecline(ad){
-  if (!confirm('Decline this ad (mark removed)?')) return;
-  await updateStatusWithFallback(ad.id, 'removed');
-  modalBackdrop.style.display='none';
-  await refreshAll();
-  showToast('Ad declined');
 }
 
-// handlers
+async function modalActionDecline(ad){
+  if (!confirm('Decline this ad?')) return;
+  await doDecline(ad);
+  modalBackdrop.style.display='none';
+}
+
+// search + refresh handlers
 searchInput.addEventListener('input', ()=> { renderPending(); renderHistory(); });
 refreshBtn.addEventListener('click', ()=> refreshAll());
 toggleHistoryBtn.addEventListener('click', ()=> { historyExpanded = !historyExpanded; renderHistory(); });
 
 approveSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Approve selected ad?')) return;
-  await updateStatusWithFallback(selectedAd.id, 'live');
+  await doApprove(selectedAd);
   await refreshAll();
   showToast('Ad approved');
 });
 declineSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Decline selected ad?')) return;
-  await updateStatusWithFallback(selectedAd.id, 'removed');
+  await doDecline(selectedAd);
   await refreshAll();
   showToast('Ad declined');
 });
 deleteSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Delete selected ad permanently?')) return;
-  const ok = await deleteWithFallback(selectedAd.id);
+  const ok = await (async ()=>{
+    try {
+      const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(selectedAd.id)}`, { method:'DELETE', credentials:'include' });
+      return r.ok;
+    } catch(e){ return false; }
+  })();
   if (ok) { await refreshAll(); showToast('Deleted'); } else alert('Delete failed');
 });
 
-// initial
+// initial & refresh
 async function refreshAll(){
   selectedAd = null; selInfo.innerHTML = 'None'; approveSelBtn.disabled = true; declineSelBtn.disabled = true; deleteSelBtn.disabled = true;
   await Promise.all([fetchPending(), fetchHistory()]);
