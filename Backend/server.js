@@ -1482,7 +1482,7 @@ app.patch('/api/ads/:id/visibility', async (req, res) => {
 
 // ---------------------------
 // (Optional) Admin status setter
-// Route: PATCH /api/ads/:id/status-admin
+// Route: PATCH /api/ads/:id/status
 // Body: { status: 'live'|'removed'|'pending_verification'|... }
 // This route should be protected by your admin middleware (adminAuth). 
 // Keep your existing admin approve/decline if you prefer — this is an alternative.
