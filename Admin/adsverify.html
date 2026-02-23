@@ -18,7 +18,6 @@
   header.banner{border-radius:12px;overflow:hidden;box-shadow:0 8px 40px rgba(2,6,23,0.06)}
   .banner-inner img{width:100%;height:72px;object-fit:cover;display:block}
   main.card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 30px rgba(2,6,23,0.04);border:1px solid var(--border);margin-top:-36px}
-  /* top area: simplified with centered title and tiny arrow back button */
   .top-area{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:12px}
   .top-row{width:100%;display:flex;align-items:center;justify-content:center;gap:12px}
   .back-only{position:absolute;left:18px;top:18px;background:transparent;border:0;padding:10px;border-radius:8px;cursor:pointer;font-weight:900;font-size:18px}
@@ -69,20 +68,16 @@
 
   <div class="wrap">
     <main class="card" aria-labelledby="adminTitle">
-      <!-- simple back arrow only (top-left, over the card area) -->
       <a href="/dashboard.html" class="back-only" aria-label="Back to dashboard">←</a>
 
-      <!-- centered title under banner -->
       <div class="top-area">
         <div class="top-row" style="position:relative; width:100%; max-width:960px;">
-          <!-- visually centered title -->
           <div style="flex:1; text-align:center;">
             <h1 id="adminTitle" class="title">Ads — Pending Approval</h1>
             <div class="subtitle">Review pending ads, approve to publish (live) or decline to mark rejected.</div>
           </div>
         </div>
 
-        <!-- compact controls row below the title -->
         <div style="width:100%; max-width:960px; display:flex; gap:8px; justify-content:center; align-items:center; margin-top:8px;">
           <input id="search" class="search" placeholder="Search title, seller, location..." />
           <button id="refresh" class="btn ghost">Refresh</button>
@@ -151,18 +146,9 @@
   </div>
 
 <script>
-/* Admin verify page
-   - Pending: GET /api/ads?status=pending_verification
-   - Approve: PATCH /api/ads/:id {status:'live'} (fallback: POST /admin endpoints)
-   - Decline: PATCH /api/ads/:id {status:'removed'}
-   - Delete: DELETE /api/ads/:id
-   - History: GET live + GET removed (combined)
-   - Search filters both lists client-side after fetch
+/* Admin verify page (updated to hit /api/admin/ads) */
 
-   I kept your original endpoints and JS structure — only layout/DOM changed.
-*/
-
-const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com'; // update if needed
+const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com';
 
 // DOM
 const pendingList = document.getElementById('pendingList');
@@ -189,27 +175,21 @@ const modalDecline = document.getElementById('modalDecline');
 const modalDelete = document.getElementById('modalDelete');
 
 let PENDING = [];
-let HISTORY = []; // combined live + removed
+let HISTORY = [];
 let selectedAd = null;
 let historyLimit = 6;
 let historyExpanded = false;
 
-// helpers
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-
 function normImages(field){
   if (!field) return [];
   if (Array.isArray(field)) return field;
   if (typeof field === 'string') {
-    try {
-      const j = JSON.parse(field);
-      if (Array.isArray(j)) return j;
-    } catch(e){}
+    try { const j = JSON.parse(field); if (Array.isArray(j)) return j; } catch(e){}
     return [field];
   }
   return [];
 }
-
 function statusBadgeHtml(status){
   const s = String(status||'').toLowerCase();
   if (['pending','pending_verification','pending_payment'].includes(s)) return `<span class="status-pending">Pending</span>`;
@@ -217,7 +197,6 @@ function statusBadgeHtml(status){
   if (s==='removed' || s==='declined' || s==='rejected') return `<span class="status-removed">REJECTED</span>`;
   return `<span class="badge">${escapeHtml((status||'').toString().toUpperCase())}</span>`;
 }
-
 function showToast(msg, ms=1800){
   const el = document.createElement('div');
   el.style.position='fixed'; el.style.left='50%'; el.style.transform='translateX(-50%)';
@@ -227,12 +206,12 @@ function showToast(msg, ms=1800){
   setTimeout(()=>el.remove(), ms);
 }
 
-// fetchers
+// fetchers (now hitting /api/admin/ads)
 async function fetchPending(){
   pendingList.innerHTML = '<div class="small muted-note">Loading pending ads...</div>';
   pendingEmpty.style.display='none';
   try {
-    const resp = await fetch(`${BACKEND_BASE}/api/ads?status=pending_verification`, { credentials:'include' });
+    const resp = await fetch(`${BACKEND_BASE}/api/admin/ads?status=pending_verification`, { credentials:'include' });
     const json = await resp.json().catch(()=>null);
     if (!resp.ok || !json || !json.success) {
       pendingList.innerHTML = '';
@@ -241,7 +220,7 @@ async function fetchPending(){
       PENDING = [];
       return;
     }
-    PENDING = (Array.isArray(json.ads) ? json.ads : json.ads || []);
+    PENDING = Array.isArray(json.ads) ? json.ads : [];
     renderPending();
   } catch (e) {
     console.error('fetchPending', e);
@@ -256,15 +235,14 @@ async function fetchHistory(){
   historyList.innerHTML = '<div class="small muted-note">Loading history...</div>';
   historyEmpty.style.display='none';
   try {
-    const resLive = await fetch(`${BACKEND_BASE}/api/ads?status=live`, { credentials:'include' });
+    const resLive = await fetch(`${BACKEND_BASE}/api/admin/ads?status=live`, { credentials:'include' });
     const jLive = await resLive.json().catch(()=>null);
     const live = (jLive && Array.isArray(jLive.ads)) ? jLive.ads : [];
 
-    const resRemoved = await fetch(`${BACKEND_BASE}/api/ads?status=removed`, { credentials:'include' });
+    const resRemoved = await fetch(`${BACKEND_BASE}/api/admin/ads?status=removed`, { credentials:'include' });
     const jRemoved = await resRemoved.json().catch(()=>null);
     const removed = (jRemoved && Array.isArray(jRemoved.ads)) ? jRemoved.ads : [];
 
-    // combine most-recent-first
     HISTORY = [...live, ...removed].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
     renderHistory();
   } catch (e) {
@@ -410,46 +388,15 @@ async function confirmDelete(ad){
 
 async function updateStatusWithFallback(adId, statusVal){
   try {
-    const resp = await fetch(`${BACKEND_BASE}/api/ads/${encodeURIComponent(adId)}`, {
+    // preferred: PATCH /api/ads/:id with body { status }
+    const resp = await fetch(`${BACKEND_BASE}/api/ads/${encodeURIComponent(adId)}/status`, {
       method:'PATCH',
       headers:{'Content-Type':'application/json'},
       credentials:'include',
       body: JSON.stringify({ status: statusVal })
     });
     if (resp.ok) return true;
-    // fallback to admin endpoints
-    if (statusVal === 'live') {
-      const urls = [`/admin/ads/${adId}/approve`, `/api/admin/ads/${adId}/approve`];
-      for (const u of urls){
-        try {
-          const r = await fetch(BACKEND_BASE + u, { method:'POST', credentials:'include' });
-          if (r.ok) return true;
-        } catch(e){}
-      }
-    } else {
-      const urls = [`/admin/ads/${adId}/decline`, `/api/admin/ads/${adId}/decline`];
-      for (const u of urls){
-        try {
-          const r = await fetch(BACKEND_BASE + u, { method:'POST', credentials:'include', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ reason: 'admin decline' })});
-          if (r.ok) return true;
-        } catch(e){}
-      }
-    }
-    console.error('updateStatusWithFallback failed', resp.status, await resp.text().catch(()=>null));
-    return false;
-  } catch (e){
-    console.error('updateStatusWithFallback error', e);
-    return false;
-  }
-}
 
-async function deleteWithFallback(adId){
-  try {
-    const resp = await fetch(`${BACKEND_BASE}/api/ads/${encodeURIComponent(adId)}`, {
-      method:'DELETE',
-      credentials:'include'
-    });
-    if (resp.ok) return true;
     // fallback to marking removed
     return await updateStatusWithFallback(adId, 'removed');
   } catch (e){
@@ -477,7 +424,6 @@ function openModal(ad){
   modalBackdrop.style.display='flex';
   modalBackdrop.setAttribute('aria-hidden','false');
 
-  // wire modal buttons
   modalApprove.onclick = ()=> { modalActionApprove(ad); };
   modalDecline.onclick = ()=> { modalActionDecline(ad); };
   modalDelete.onclick = ()=> { confirmDelete(ad); };
@@ -501,12 +447,11 @@ async function modalActionDecline(ad){
   showToast('Ad declined');
 }
 
-// search + refresh handlers
+// handlers
 searchInput.addEventListener('input', ()=> { renderPending(); renderHistory(); });
 refreshBtn.addEventListener('click', ()=> refreshAll());
 toggleHistoryBtn.addEventListener('click', ()=> { historyExpanded = !historyExpanded; renderHistory(); });
 
-// selected quick action wiring
 approveSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Approve selected ad?')) return;
   await updateStatusWithFallback(selectedAd.id, 'live');
@@ -525,7 +470,7 @@ deleteSelBtn.addEventListener('click', async ()=> {
   if (ok) { await refreshAll(); showToast('Deleted'); } else alert('Delete failed');
 });
 
-// initial & refresh
+// initial
 async function refreshAll(){
   selectedAd = null; selInfo.innerHTML = 'None'; approveSelBtn.disabled = true; declineSelBtn.disabled = true; deleteSelBtn.disabled = true;
   await Promise.all([fetchPending(), fetchHistory()]);
