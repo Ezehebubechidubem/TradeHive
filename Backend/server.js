@@ -1545,7 +1545,69 @@ app.get('/api/admin/ads', /* adminAuth, */ async (req, res) => {
     return res.status(500).json({ success: false, message: 'server-error' });
   }
 });
+// User-initiated permanent delete (verifies owner).
+// DELETE /api/ads/:id?user_id=123   or send { user_id } in JSON body
+app.delete('/api/ads/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const providedUser = (req.query.user_id || req.query.user || (req.body && req.body.user_id) || (req.body && req.body.seller_id)) || null;
+    if (!providedUser) return res.status(400).json({ success:false, message:'user_id required' });
 
+    const client = await pool.connect();
+    try {
+      // ensure ad exists and belongs to user
+      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      const ad = q.rows[0];
+      if (String(ad.seller_id) !== String(providedUser)) {
+        return res.status(403).json({ success:false, message:'forbidden' });
+      }
+
+      // delete ad permanently
+      await client.query('DELETE FROM ads WHERE id=$1', [id]);
+
+      // optionally: notify seller
+      try {
+        const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [providedUser])).rows[0];
+        if (seller) {
+          try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad deleted', text: `Your ad ${id} has been deleted.` }); } catch(e){ /* ignore */ }
+        }
+      } catch(e){ /* ignore */ }
+
+      return res.json({ success:true, message:'deleted' });
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('DELETE /api/ads/:id', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  }
+});
+
+// Admin permanent delete (protected)
+app.delete('/admin/ads/:id', adminAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+
+      await client.query('DELETE FROM ads WHERE id=$1', [id]);
+
+      // notify seller if present
+      try {
+        const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [q.rows[0].seller_id])).rows[0];
+        if (seller) {
+          try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad removed by admin', text: `Your ad ${id} was permanently removed by admin.` }); } catch(e){ /* ignore */ }
+        }
+      } catch(e){ /* ignore */ }
+
+      return res.json({ success:true, message:'deleted' });
+    } finally { client.release(); }
+  } catch (err) {
+    console.error('DELETE /admin/ads/:id', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  }
+});
 // ---------------------------
 // (Optional) Admin status setter
 // Route: PATCH /api/ads/:id/status
