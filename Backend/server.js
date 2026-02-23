@@ -1479,6 +1479,72 @@ app.patch('/api/ads/:id/visibility', async (req, res) => {
   }
 });
 
+//Admin ads routes
+// Admin ads listing for the Admin UI
+// Notes:
+//  - Accepts optional query params: status, seller_id, q, limit, offset
+//  - Returns ads with seller_email and seller_name, and normalized images array
+//  - If you have adminAuth middleware, add it before the handler (see commented line)
+app.get('/api/admin/ads', /* adminAuth, */ async (req, res) => {
+  try {
+    const status = (typeof req.query.status !== 'undefined' && req.query.status !== '') ? String(req.query.status) : null;
+    const seller_id = (req.query.seller_id || req.query.user_id || '').toString() || null;
+    const q = (req.query.q || '').toString().trim();
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200)); // admin can request more
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // use existing normalizeImagesField if available (you provided it earlier)
+    const _normalizeImagesField = (typeof normalizeImagesField === 'function')
+      ? normalizeImagesField
+      : function(imagesField) {
+          if (!imagesField) return [];
+          if (Array.isArray(imagesField)) return imagesField;
+          if (typeof imagesField === 'string') {
+            try {
+              const parsed = JSON.parse(imagesField);
+              if (Array.isArray(parsed)) return parsed;
+            } catch (e) {
+              return [imagesField];
+            }
+          }
+          return [];
+        };
+
+    const client = await pool.connect();
+    try {
+      const where = [];
+      const vals = [];
+      let idx = 1;
+
+      if (status) { where.push(`a.status = $${idx++}`); vals.push(status); }
+      if (seller_id) { where.push(`a.seller_id = $${idx++}`); vals.push(seller_id); }
+
+      if (q) {
+        const search = `%${q}%`;
+        where.push(`(a.title ILIKE $${idx} OR a.description ILIKE $${idx} OR a.location ILIKE $${idx})`);
+        vals.push(search);
+        idx++;
+      }
+
+      let sql = `SELECT a.*, u.email as seller_email, u.fullname as seller_name
+                 FROM ads a
+                 LEFT JOIN users u ON u.id = a.seller_id`;
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ` ORDER BY a.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+      vals.push(limit, offset);
+
+      const r = await client.query(sql, vals);
+      const ads = r.rows.map(ad => ({ ...ad, images: _normalizeImagesField(ad.images) }));
+
+      return res.json({ success: true, ads });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('GET /api/admin/ads error', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    return res.status(500).json({ success: false, message: 'server-error' });
+  }
+});
 
 // ---------------------------
 // (Optional) Admin status setter
