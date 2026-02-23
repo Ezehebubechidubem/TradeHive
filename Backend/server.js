@@ -1589,22 +1589,44 @@ app.post('/admin/ads/:id/decline', async (req, res) => {
   }
 });
 
-// DELETE /admin/ads/:id  (permanent delete)
+// DELETE /admin/ads/:id  — permanently remove an ad
+// Note: add adminAuth middleware when ready (e.g. app.delete('/admin/ads/:id', adminAuth, ...))
 app.delete('/admin/ads/:id', async (req, res) => {
   const id = req.params.id;
   const client = await pool.connect();
   try {
-    console.debug('[admin][delete] id=', id);
-    const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-    if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+    await client.query('BEGIN');
 
-    const deleted = await client.query('DELETE FROM ads WHERE id=$1 RETURNING id', [id]);
-    console.info(`[admin][delete] ad ${id} permanently deleted`);
-    return res.json({ success:true, message:'deleted', id: deleted.rows[0].id });
+    // try to delete the ad row permanently
+    const del = await client.query('DELETE FROM ads WHERE id=$1 RETURNING id', [id]);
+
+    if (!del.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'not-found' });
+    }
+
+    await client.query('COMMIT');
+    console.info(`[admin][delete] permanently deleted ad ${id}`);
+    return res.json({ success: true, message: 'deleted', id: del.rows[0].id });
   } catch (err) {
-    console.error('[admin][delete] error', err && (err.stack||err.message) || err);
-    return res.status(500).json({ success:false, message:'server-error' });
-  } finally { client.release(); }
+    // rollback and return helpful error
+    try { await client.query('ROLLBACK'); } catch (e) {}
+    console.error('[admin][delete] error', err && (err.stack || err.message) || err);
+
+    // Postgres foreign key violation code: 23503
+    if (err && err.code === '23503') {
+      // dependent rows exist (FK constraint) — inform client so they can decide
+      return res.status(409).json({
+        success: false,
+        message: 'foreign-key-constraint',
+        detail: err.message || 'There are dependent records preventing permanent delete.'
+      });
+    }
+
+    return res.status(500).json({ success: false, message: 'server-error', detail: err && err.message ? err.message : '' });
+  } finally {
+    client.release();
+  }
 });
 /////////////////////////////////////////////////////////////////////
 // Orders: release & confirm (buyer confirm -> schedule payout)
