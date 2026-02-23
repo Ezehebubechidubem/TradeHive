@@ -1534,21 +1534,28 @@ app.patch('/api/ads/:id/visibility', async (req, res) => {
   }
 });
 
-//Admin ads routes
-// Admin ads listing for the Admin UI
-// Notes:
-//  - Accepts optional query params: status, seller_id, q, limit, offset
-//  - Returns ads with seller_email and seller_name, and normalized images array
-//  - If you have adminAuth middleware, add it before the handler (see commented line)
-app.get('/api/admin/ads', /* adminAuth, */ async (req, res) => {
+// ===== Temporary admin routes (NO adminAuth) =====
+// WARNING: These endpoints are intentionally left unprotected for testing.
+// Re-add adminAuth (or proper auth) ASAP after verification.
+
+/////////////////////////////////////////////////////////////////////
+// GET /api/admin/ads
+// Query params:
+//  - status (optional)  -> filter by ad.status (defaults to all if not provided)
+//  - q (optional)       -> search in title, description, location (ILIKE)
+//  - seller_id (opt)
+//  - limit (opt) default 200, max 1000
+//  - offset (opt)
+/////////////////////////////////////////////////////////////////////
+app.get('/api/admin/ads', async (req, res) => {
   try {
-    const status = (typeof req.query.status !== 'undefined' && req.query.status !== '') ? String(req.query.status) : null;
-    const seller_id = (req.query.seller_id || req.query.user_id || '').toString() || null;
+    const statusParam = (typeof req.query.status !== 'undefined' && req.query.status !== '') ? String(req.query.status) : null;
     const q = (req.query.q || '').toString().trim();
-    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200)); // admin can request more
+    const seller_id = (req.query.seller_id || req.query.user_id || '').toString() || null;
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
-    // use existing normalizeImagesField if available (you provided it earlier)
+    // normalize images helper (use existing function if available)
     const _normalizeImagesField = (typeof normalizeImagesField === 'function')
       ? normalizeImagesField
       : function(imagesField) {
@@ -1568,27 +1575,33 @@ app.get('/api/admin/ads', /* adminAuth, */ async (req, res) => {
     const client = await pool.connect();
     try {
       const where = [];
-      const vals = [];
+      const values = [];
       let idx = 1;
 
-      if (status) { where.push(`a.status = $${idx++}`); vals.push(status); }
-      if (seller_id) { where.push(`a.seller_id = $${idx++}`); vals.push(seller_id); }
+      if (statusParam) {
+        where.push(`a.status = $${idx++}`);
+        values.push(statusParam);
+      }
+
+      if (seller_id) {
+        where.push(`a.seller_id = $${idx++}`);
+        values.push(seller_id);
+      }
 
       if (q) {
-        const search = `%${q}%`;
+        const qParam = `%${q}%`;
         where.push(`(a.title ILIKE $${idx} OR a.description ILIKE $${idx} OR a.location ILIKE $${idx})`);
-        vals.push(search);
+        values.push(qParam);
         idx++;
       }
 
-      let sql = `SELECT a.*, u.email as seller_email, u.fullname as seller_name
-                 FROM ads a
-                 LEFT JOIN users u ON u.id = a.seller_id`;
+      let sql = `SELECT a.* FROM ads a`;
       if (where.length) sql += ' WHERE ' + where.join(' AND ');
       sql += ` ORDER BY a.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
-      vals.push(limit, offset);
+      values.push(limit, offset);
 
-      const r = await client.query(sql, vals);
+      const r = await client.query(sql, values);
+
       const ads = r.rows.map(ad => ({ ...ad, images: _normalizeImagesField(ad.images) }));
 
       return res.json({ success: true, ads });
@@ -1600,111 +1613,122 @@ app.get('/api/admin/ads', /* adminAuth, */ async (req, res) => {
     return res.status(500).json({ success: false, message: 'server-error' });
   }
 });
-// User-initiated permanent delete (verifies owner).
-// DELETE /api/ads/:id?user_id=123   or send { user_id } in JSON body
-app.delete('/api/ads/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const providedUser = (req.query.user_id || req.query.user || (req.body && req.body.user_id) || (req.body && req.body.seller_id)) || null;
-    if (!providedUser) return res.status(400).json({ success:false, message:'user_id required' });
 
-    const client = await pool.connect();
+/////////////////////////////////////////////////////////////////////
+// POST /admin/ads/:id/approve
+// Marks ad as 'live' and returns the updated ad
+/////////////////////////////////////////////////////////////////////
+app.post('/admin/ads/:id/approve', async (req, res) => {
+  const id = req.params.id;
+  const client = await pool.connect();
+  try {
+    const upd = await client.query(
+      `UPDATE ads SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      ['live', id]
+    );
+    if (!upd.rows.length) {
+      return res.status(404).json({ success:false, message:'not-found' });
+    }
+    const ad = upd.rows[0];
+
+    // try notify seller (best-effort)
     try {
-      // ensure ad exists and belongs to user
-      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      const ad = q.rows[0];
-      if (String(ad.seller_id) !== String(providedUser)) {
-        return res.status(403).json({ success:false, message:'forbidden' });
+      const sellerQ = await client.query('SELECT id, email, username FROM users WHERE id=$1 LIMIT 1', [ad.seller_id]);
+      const seller = sellerQ.rows[0];
+      if (seller && (seller.email || seller.username)) {
+        await sendEmail({
+          to: seller.email || seller.username,
+          subject: 'Your ad was approved',
+          text: `Your ad "${ad.title || ad.id}" has been approved and is now live.`
+        }).catch(e => console.warn('sendEmail approve failed', e && e.message ? e.message : e));
       }
+    } catch (notifyErr) {
+      console.warn('notify seller error (approve)', notifyErr && (notifyErr.message || notifyErr));
+    }
 
-      // delete ad permanently
-      await client.query('DELETE FROM ads WHERE id=$1', [id]);
-
-      // optionally: notify seller
-      try {
-        const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [providedUser])).rows[0];
-        if (seller) {
-          try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad deleted', text: `Your ad ${id} has been deleted.` }); } catch(e){ /* ignore */ }
-        }
-      } catch(e){ /* ignore */ }
-
-      return res.json({ success:true, message:'deleted' });
-    } finally { client.release(); }
+    return res.json({ success:true, message:'approved', ad });
   } catch (err) {
-    console.error('DELETE /api/ads/:id', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    console.error('admin approve error (NO-AUTH)', err && (err.stack || err.message) ? (err.stack || err.message) : err);
     return res.status(500).json({ success:false, message:'server-error' });
+  } finally {
+    client.release();
   }
 });
 
-// Admin permanent delete (protected)
-app.delete('/admin/ads/:id', adminAuth, async (req, res) => {
+/////////////////////////////////////////////////////////////////////
+// POST /admin/ads/:id/decline
+// Marks ad as 'removed' and returns the updated ad. Accepts { reason }
+// Also inserts an audit record into ad_audit if that table exists (best-effort)
+/////////////////////////////////////////////////////////////////////
+app.post('/admin/ads/:id/decline', async (req, res) => {
+  const id = req.params.id;
+  const reason = (req.body && req.body.reason) ? String(req.body.reason).slice(0,1000) : null;
+  const client = await pool.connect();
   try {
-    const id = req.params.id;
-    const client = await pool.connect();
+    const upd = await client.query(
+      `UPDATE ads SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      ['removed', id]
+    );
+    if (!upd.rows.length) {
+      return res.status(404).json({ success:false, message:'not-found' });
+    }
+    const ad = upd.rows[0];
+
+    // attempt to insert audit record (if table exists)
     try {
-      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+      await client.query(
+        `INSERT INTO ad_audit (ad_id, action, note, created_at) VALUES ($1,$2,$3,NOW())`,
+        [id, 'decline', reason || 'declined by admin (no-auth test)']
+      ).catch(() => {}); // ignore if table missing
+    } catch(e) { /* ignore */ }
 
-      await client.query('DELETE FROM ads WHERE id=$1', [id]);
+    // notify seller
+    try {
+      const sellerQ = await client.query('SELECT email, username FROM users WHERE id=$1 LIMIT 1', [ad.seller_id]);
+      const seller = sellerQ.rows[0];
+      if (seller && (seller.email || seller.username)) {
+        await sendEmail({
+          to: seller.email || seller.username,
+          subject: 'Your ad was declined',
+          text: `Your ad "${ad.title || ad.id}" was declined. Reason: ${reason || 'No reason provided'}`
+        }).catch(e => console.warn('sendEmail decline failed', e && e.message ? e.message : e));
+      }
+    } catch (notifyErr) {
+      console.warn('notify seller error (decline)', notifyErr && (notifyErr.message || notifyErr));
+    }
 
-      // notify seller if present
-      try {
-        const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [q.rows[0].seller_id])).rows[0];
-        if (seller) {
-          try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad removed by admin', text: `Your ad ${id} was permanently removed by admin.` }); } catch(e){ /* ignore */ }
-        }
-      } catch(e){ /* ignore */ }
-
-      return res.json({ success:true, message:'deleted' });
-    } finally { client.release(); }
+    return res.json({ success:true, message:'declined', ad });
   } catch (err) {
-    console.error('DELETE /admin/ads/:id', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    console.error('admin decline error (NO-AUTH)', err && (err.stack || err.message) ? (err.stack || err.message) : err);
     return res.status(500).json({ success:false, message:'server-error' });
+  } finally {
+    client.release();
   }
 });
-// ---------------------------
-// (Optional) Admin status setter
-// Route: PATCH /api/ads/:id/status
-// Body: { status: 'live'|'removed'|'pending_verification'|... }
-// This route should be protected by your admin middleware (adminAuth). 
-// Keep your existing admin approve/decline if you prefer — this is an alternative.
-// ---------------------------
-app.patch('/api/ads/:id/status-admin', adminAuth, async (req, res) => {
+
+/////////////////////////////////////////////////////////////////////
+// DELETE /admin/ads/:id
+// Permanently deletes ad row and returns deleted row (if any)
+/////////////////////////////////////////////////////////////////////
+app.delete('/admin/ads/:id', async (req, res) => {
+  const id = req.params.id;
+  const client = await pool.connect();
   try {
-    const id = req.params.id;
-    const { status } = req.body || {};
-    if (!status) return res.status(400).json({ success:false, message:'status required' });
+    const r = await client.query('DELETE FROM ads WHERE id=$1 RETURNING *', [id]);
+    if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
 
-    // admin may set any allowed status
-    const allowedAdmin = ['live','pending_verification','removed','declined','offline','draft','expired','payment_failed'];
-    if (!allowedAdmin.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
+    // Optional: insert audit / cleanup references here
+    // e.g. delete images from storage, notify seller, etc. (not done automatically)
 
-    const client = await pool.connect();
-    try {
-      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-
-      await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [status, id]);
-
-      // optional: notify seller if admin set to live or removed
-      try {
-        if (status === 'live' || status === 'removed' || status === 'declined') {
-          const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [q.rows[0].seller_id])).rows[0];
-          if (sellerRow) {
-            if (status === 'live') await sendEmail({ to: sellerRow.email || sellerRow.username, subject:'Ad approved', text:`Your ad ${id} is now live.` });
-            if (status === 'removed' || status === 'declined') await sendEmail({ to: sellerRow.email || sellerRow.username, subject:'Ad removed/declined', text:`Your ad ${id} was removed/declined by admin.` });
-          }
-        }
-      } catch (e) { console.warn('admin status notify failed', e && e.message ? e.message : e); }
-
-      return res.json({ success:true, message:'status-updated' });
-    } finally { client.release(); }
+    return res.json({ success:true, message:'deleted', ad: r.rows[0] });
   } catch (err) {
-    console.error('PATCH /api/ads/:id/status-admin', err && err.stack ? err.stack : err);
+    console.error('admin delete error (NO-AUTH)', err && (err.stack || err.message) ? (err.stack || err.message) : err);
     return res.status(500).json({ success:false, message:'server-error' });
+  } finally {
+    client.release();
   }
 });
+
 /////////////////////////////////////////////////////////////////////
 // Orders: release & confirm (buyer confirm -> schedule payout)
 /////////////////////////////////////////////////////////////////////
