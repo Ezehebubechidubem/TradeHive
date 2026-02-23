@@ -143,10 +143,11 @@
 
 <script>
 /* Admin verify page — primary actions call admin endpoints:
-   - GET /api/admin/ads?status=...
+   - GET  /api/admin/ads?status=...
    - POST /admin/ads/:id/approve
    - POST /admin/ads/:id/decline  { reason }
    - DELETE /admin/ads/:id
+   Fallbacks preserved to PATCH /api/ads/:id/status and other admin endpoints.
 */
 
 const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com';
@@ -362,30 +363,45 @@ function setSelected(ad){
   deleteSelBtn.disabled = false;
 }
 
-/* Primary admin actions — call admin endpoints directly */
+/* Primary admin actions — call admin endpoints directly and verify response */
 
-// Approve via admin endpoint
+// Approve via admin endpoint (validate returned ad.status)
 async function doApprove(ad){
   if (!confirm(`Approve "${ad.title}" and make it live?`)) return;
   try {
     const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/approve`, { method:'POST', credentials:'include' });
-    if (r.ok) {
+    const j = await r.json().catch(()=>null);
+    if (r.ok && j && j.success && j.ad && String(j.ad.status).toLowerCase() === 'live') {
       showToast('Ad approved');
       await refreshAll();
       return;
     }
-    // if not ok, fallback to status update
-    console.warn('Admin approve returned non-ok', r.status);
-  } catch(e) {
+    // if server returned a different shape, try best-effort checks
+    if (r.ok && j && j.success) {
+      // server accepted but didn't return ad: refresh & check DB via listing
+      await refreshAll();
+      // check if ad moved to live in latest data
+      const found = findAdInData(ad.id);
+      if (found && String(found.status).toLowerCase() === 'live') {
+        showToast('Ad approved');
+        return;
+      }
+    }
+    // fallback attempts
+    console.warn('Admin approve did not confirm live. Response:', r.status, j);
+    // try fallback patch route
+  } catch (e) {
     console.warn('Admin approve error', e);
   }
+
   // fallback: try existing patch route
-  await updateStatusWithFallback(ad.id, 'live');
+  const ok = await updateStatusWithFallback(ad.id, 'live');
+  if (ok) showToast('Ad approved (fallback)');
+  else alert('Approve failed — server did not update ad. Check server logs.');
   await refreshAll();
-  showToast('Ad approved (fallback)');
 }
 
-// Decline via admin endpoint
+// Decline via admin endpoint (validate returned ad.status === removed)
 async function doDecline(ad){
   if (!confirm(`Decline "${ad.title}" (mark as rejected)?`)) return;
   const reason = prompt('Optional reason for decline (leave blank for none):') || '';
@@ -396,38 +412,59 @@ async function doDecline(ad){
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({ reason })
     });
-    if (r.ok) {
+    const j = await r.json().catch(()=>null);
+    if (r.ok && j && j.success && j.ad && (String(j.ad.status).toLowerCase() === 'removed' || String(j.ad.status).toLowerCase() === 'declined')) {
       showToast('Ad declined');
       await refreshAll();
       return;
     }
-    console.warn('Admin decline returned non-ok', r.status);
-  } catch(e) {
+    if (r.ok && j && j.success) {
+      await refreshAll();
+      const found = findAdInData(ad.id);
+      if (found && ['removed','declined','rejected'].includes(String(found.status).toLowerCase())) {
+        showToast('Ad declined');
+        return;
+      }
+    }
+    console.warn('Admin decline did not confirm removed. Response:', r.status, j);
+  } catch (e) {
     console.warn('Admin decline error', e);
   }
+
   // fallback
-  await updateStatusWithFallback(ad.id, 'removed');
+  const ok = await updateStatusWithFallback(ad.id, 'removed');
+  if (ok) showToast('Ad declined (fallback)');
+  else alert('Decline failed — server did not update ad.');
   await refreshAll();
-  showToast('Ad declined (fallback)');
 }
 
-// Permanently delete via admin endpoint
+// Permanently delete via admin endpoint (validate response)
 async function confirmDelete(ad){
   if (!confirm(`Permanently DELETE ad "${ad.title}"? This is irreversible.`)) return;
   try {
     const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}`, { method:'DELETE', credentials:'include' });
-    if (r.ok) {
+    const j = await r.json().catch(()=>null);
+    if (r.ok && j && j.success) {
       showToast('Ad deleted');
       await refreshAll();
       return;
     }
-    console.warn('Admin delete returned non-ok', r.status);
-  } catch(e) {
+    console.warn('Admin delete not ok', r.status, j);
+  } catch(e){
     console.warn('Admin delete error', e);
   }
-  // fallback to marking removed
+
+  // fallback - soft remove
   const ok = await updateStatusWithFallback(ad.id, 'removed');
-  if (ok) { await refreshAll(); showToast('Deleted (soft)'); } else alert('Delete failed');
+  if (ok) showToast('Deleted (soft)');
+  else alert('Delete failed — server did not delete ad.');
+  await refreshAll();
+}
+
+// helper: locate ad in current cached PENDING/HISTORY
+function findAdInData(adId) {
+  const both = [...PENDING, ...HISTORY];
+  return both.find(x => String(x.id) === String(adId)) || null;
 }
 
 // fallback helper (keeps previous fallback behavior)
@@ -453,7 +490,7 @@ async function updateStatusWithFallback(adId, statusVal){
         try { const r = await fetch(u, { method:'POST', credentials:'include', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ reason: 'admin decline' })}); if (r.ok) return true; } catch(e){}
       }
     }
-    console.error('updateStatusWithFallback failed', resp.status, await resp.text().catch(()=>null));
+    try { console.error('updateStatusWithFallback failed', resp.status, await resp.text().catch(()=>null)); } catch(e){}
     return false;
   } catch (e){
     console.error('updateStatusWithFallback error', e);
@@ -499,7 +536,7 @@ async function modalActionDecline(ad){
   modalBackdrop.style.display='none';
 }
 
-// search + refresh handlers
+// handlers
 searchInput.addEventListener('input', ()=> { renderPending(); renderHistory(); });
 refreshBtn.addEventListener('click', ()=> refreshAll());
 toggleHistoryBtn.addEventListener('click', ()=> { historyExpanded = !historyExpanded; renderHistory(); });
@@ -508,17 +545,16 @@ approveSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Approve selected ad?')) return;
   await doApprove(selectedAd);
   await refreshAll();
-  showToast('Ad approved');
 });
 declineSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Decline selected ad?')) return;
   await doDecline(selectedAd);
   await refreshAll();
-  showToast('Ad declined');
 });
 deleteSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Delete selected ad permanently?')) return;
   await confirmDelete(selectedAd);
+  await refreshAll();
 });
 
 // initial & refresh
