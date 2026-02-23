@@ -814,19 +814,7 @@ app.get('/api/ads/:id', async (req, res) => {
   }
 });
 
-app.get('/api/ads/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      const ad = r.rows[0];
-      ad.images = mapAdImagesForResponse(ad.images || []);
-      return res.json({ success:true, ad });
-    } finally { client.release(); }
-  } catch (e) { console.error('GET /api/ads/:id', e); return res.status(500).json({ success:false }); }
-});
+
 
 /////////////////////////////////////////////////////////////////////
 // POST /api/ads/:id/buy (create order + payment)
