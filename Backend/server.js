@@ -1589,30 +1589,23 @@ app.post('/admin/ads/:id/decline', async (req, res) => {
   }
 });
 
+// DELETE /admin/ads/:id  (permanent delete)
 app.delete('/admin/ads/:id', async (req, res) => {
   const id = req.params.id;
   const client = await pool.connect();
   try {
-    console.debug('[admin][delete] req.params.id=', id);
-    // Check existence first
+    console.debug('[admin][delete] id=', id);
     const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-    if (!q.rows.length) {
-      console.debug('[admin][delete] not-found', id);
-      return res.status(404).json({ success: false, message: 'not-found' });
-    }
+    if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
 
-    // Permanently delete (be careful — irreversible)
     const deleted = await client.query('DELETE FROM ads WHERE id=$1 RETURNING id', [id]);
     console.info(`[admin][delete] ad ${id} permanently deleted`);
-    return res.json({ success: true, message: 'deleted', id: deleted.rows[0].id });
+    return res.json({ success:true, message:'deleted', id: deleted.rows[0].id });
   } catch (err) {
-    console.error('[admin][delete] error', err && (err.stack || err.message) ? (err.stack || err.message) : err);
-    return res.status(500).json({ success: false, message: 'server-error' });
-  } finally {
-    client.release();
-  }
+    console.error('[admin][delete] error', err && (err.stack||err.message) || err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  } finally { client.release(); }
 });
-
 /////////////////////////////////////////////////////////////////////
 // Orders: release & confirm (buyer confirm -> schedule payout)
 /////////////////////////////////////////////////////////////////////
