@@ -1315,35 +1315,90 @@ app.get('/admin/ads/pending', adminAuth, async (req,res) => {
   } catch(e){ console.error('admin list pending', e); res.status(500).json({ success:false }); }
 });
 
-app.post('/admin/ads/:id/approve', adminAuth, async (req,res) => {
+// Admin approve
+app.post('/admin/ads/:id/approve', adminAuth, async (req, res) => {
+  const id = req.params.id;
+  const client = await pool.connect();
   try {
-    const id = req.params.id;
-    const client = await pool.connect();
+    const q = await client.query('UPDATE ads SET status = $1, updated_at = now() WHERE id = $2 RETURNING *', ['live', id]);
+    if (!q.rowCount) return res.status(404).json({ success: false, message: 'not-found' });
+    const updated = q.rows[0];
+
+    // notify seller (best effort)
     try {
-      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['live', id]);
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
-      if (seller) { try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` }); } catch(e){ console.warn('sendEmail approve failed', e && e.message ? e.message : e); } }
-      return res.json({ success:true, message:'approved' });
-    } finally { client.release(); }
-  } catch (e){ console.error('admin approve', e); res.status(500).json({ success:false }); }
+      const sellerQ = await client.query('SELECT email, username FROM users WHERE id=$1 LIMIT 1', [updated.seller_id]);
+      const seller = sellerQ.rows[0];
+      if (seller) {
+        await sendEmail({ to: seller.email || seller.username, subject: 'Ad approved', text: `Your ad ${id} was approved and is now live.` }).catch(()=>{});
+      }
+    } catch(e){ console.warn('notify seller approve failed', e && e.message ? e.message : e); }
+
+    return res.json({ success: true, message: 'approved', ad: updated });
+  } catch (err) {
+    console.error('admin approve error', err && (err.stack||err.message) ? (err.stack||err.message) : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  } finally { client.release(); }
 });
 
-app.post('/admin/ads/:id/decline', adminAuth, async (req,res) => {
+// Admin decline
+app.post('/admin/ads/:id/decline', adminAuth, async (req, res) => {
+  const id = req.params.id;
+  const reason = (req.body && req.body.reason) ? String(req.body.reason) : null;
+  const client = await pool.connect();
   try {
-    const id = req.params.id;
-    const { reason } = req.body || {};
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      await client.query('UPDATE ads SET status=$1 WHERE id=$2', ['removed', id]);
-      const seller = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [r.rows[0].seller_id])).rows[0];
-      if (seller) { try { await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason || 'No reason provided'}` }); } catch(e){ console.warn('sendEmail decline failed', e && e.message ? e.message : e); } }
-      return res.json({ success:true, message:'declined' });
-    } finally { client.release(); }
-  } catch (e){ console.error('admin decline', e); res.status(500).json({ success:false }); }
+    // Append reason into meta JSONB if present (useful record)
+    if (reason) {
+      const r = await client.query("UPDATE ads SET status=$1, updated_at=now(), meta = coalesce(meta, '{}'::jsonb) || $3 WHERE id=$2 RETURNING *",
+        ['removed', id, JSON.stringify({ admin_decline_reason: reason })]);
+      if (!r.rowCount) return res.status(404).json({ success:false, message:'not-found' });
+      const updated = r.rows[0];
+
+      // notify seller
+      try {
+        const sellerQ = await client.query('SELECT email, username FROM users WHERE id=$1 LIMIT 1', [updated.seller_id]);
+        const seller = sellerQ.rows[0];
+        if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined. Reason: ${reason}` }).catch(()=>{});
+      } catch(e){ console.warn('notify seller decline failed', e && e.message ? e.message : e); }
+
+      return res.json({ success:true, message:'declined', ad: updated });
+    } else {
+      // No reason provided: simple update
+      const r = await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2 RETURNING *', ['removed', id]);
+      if (!r.rowCount) return res.status(404).json({ success:false, message:'not-found' });
+      const updated = r.rows[0];
+
+      try {
+        const sellerQ = await client.query('SELECT email, username FROM users WHERE id=$1 LIMIT 1', [updated.seller_id]);
+        const seller = sellerQ.rows[0];
+        if (seller) await sendEmail({ to: seller.email || seller.username, subject: 'Ad declined', text: `Your ad ${id} was declined.` }).catch(()=>{});
+      } catch(e){ console.warn('notify seller decline failed', e && e.message ? e.message : e); }
+
+      return res.json({ success:true, message:'declined', ad: updated });
+    }
+  } catch (err) {
+    console.error('admin decline error', err && (err.stack||err.message) ? (err.stack||err.message) : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  } finally { client.release(); }
+});
+
+// Admin permanent delete
+app.delete('/admin/ads/:id', adminAuth, async (req, res) => {
+  const id = req.params.id;
+  const client = await pool.connect();
+  try {
+    // Optionally fetch ad to delete any remote assets (cloudinary) before deleting.
+    const adQ = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+    if (!adQ.rowCount) return res.status(404).json({ success:false, message:'not-found' });
+    const adRow = adQ.rows[0];
+
+    // TODO: add any cloudinary cleanup here if you track public_ids in meta/images
+
+    const d = await client.query('DELETE FROM ads WHERE id=$1 RETURNING *', [id]);
+    return res.json({ success:true, message:'deleted', ad: d.rows[0] });
+  } catch (err) {
+    console.error('admin delete error', err && (err.stack||err.message) ? (err.stack||err.message) : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  } finally { client.release(); }
 });
 
 /////////////////////////////////////////////////////////////////////
