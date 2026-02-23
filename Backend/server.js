@@ -797,28 +797,6 @@ function normalizeImagesField(imagesField) {
   // fallback to empty array
   return [];
 }
-
-app.get('/api/ads', async (req, res) => {
-  try {
-    const status = req.query.status || 'live';
-    const client = await pool.connect();
-    try {
-      const r = await client.query('SELECT * FROM ads WHERE status=$1 ORDER BY created_at DESC LIMIT 500', [status]);
-      // normalize images on each ad so frontend receives an array
-      const ads = r.rows.map(ad => {
-        return {
-          ...ad,
-          images: normalizeImagesField(ad.images)
-        };
-      });
-      return res.json({ success:true, ads });
-    } finally { client.release(); }
-  } catch (e) {
-    console.error('GET /api/ads error', e);
-    return res.status(500).json({ success:false });
-  }
-});
-
 app.get('/api/ads/:id', async (req, res) => {
   try {
     const id = req.params.id;
