@@ -1419,23 +1419,108 @@ app.get('/api/my/ads', async (req, res) => {
   } catch (err) { console.error('/api/my/ads', err); return res.status(500).json({ success:false, message:'server-error' }); }
 });
 
-app.patch('/api/ads/:id/status', async (req, res) => {
+// ---------------------------
+// Seller visibility toggle
+// Route: PATCH /api/ads/:id/visibility
+// Body: { seller_id: '...', action: 'online'|'offline' }
+// Purpose: allow sellers to only toggle their approved ads between live <-> offline
+// ---------------------------
+app.patch('/api/ads/:id/visibility', async (req, res) => {
   try {
     const id = req.params.id;
-    const { status } = req.body || {};
-    if (!status) return res.status(400).json({ success:false, message:'status required' });
+    const { seller_id, action } = req.body || {};
 
-    const allowed = ['live','offline','removed','pending_verification','draft','expired','pending_payment'];
-    if (!allowed.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
+    if (!seller_id || !action) {
+      return res.status(400).json({ success:false, message:'seller_id and action required' });
+    }
+
+    if (!['online','offline','live','offline_status'].includes(action) && !['live','offline'].includes(action)) {
+      // Accept both "online"/"offline" or "live"/"offline" for compatibility
+    }
+
+    // normalize action to status
+    const wanted = (action === 'online' || action === 'live') ? 'live' : 'offline';
 
     const client = await pool.connect();
     try {
       const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
       if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+
+      const ad = q.rows[0];
+
+      // ensure this seller owns the ad
+      if (String(ad.seller_id) !== String(seller_id)) {
+        return res.status(403).json({ success:false, message:'forbidden - not ad owner' });
+      }
+
+      // only allow toggling live <-> offline for ads that were already approved
+      // consider 'offline' as previously approved; do not allow seller to set live if ad is pending_verification/pending_payment/draft
+      const current = (ad.status || '').toLowerCase();
+
+      if (wanted === 'live') {
+        // allow bringing back online only if the ad is currently offline (i.e., previously approved)
+        if (current !== 'offline') {
+          return res.status(403).json({ success:false, message:'Ad not approved by admin or not eligible to be set live' });
+        }
+      } else { // wanted === 'offline'
+        if (current !== 'live') {
+          return res.status(400).json({ success:false, message:'Only live ads can be set offline' });
+        }
+      }
+
+      await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [wanted, id]);
+      return res.json({ success:true, message:'visibility-updated', status:wanted });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('PATCH /api/ads/:id/visibility', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  }
+});
+
+
+// ---------------------------
+// (Optional) Admin status setter
+// Route: PATCH /api/ads/:id/status-admin
+// Body: { status: 'live'|'removed'|'pending_verification'|... }
+// This route should be protected by your admin middleware (adminAuth). 
+// Keep your existing admin approve/decline if you prefer — this is an alternative.
+// ---------------------------
+app.patch('/api/ads/:id/status-admin', adminAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body || {};
+    if (!status) return res.status(400).json({ success:false, message:'status required' });
+
+    // admin may set any allowed status
+    const allowedAdmin = ['live','pending_verification','removed','declined','offline','draft','expired','payment_failed'];
+    if (!allowedAdmin.includes(status)) return res.status(400).json({ success:false, message:'invalid-status' });
+
+    const client = await pool.connect();
+    try {
+      const q = await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [id]);
+      if (!q.rows.length) return res.status(404).json({ success:false, message:'not-found' });
+
       await client.query('UPDATE ads SET status=$1, updated_at=now() WHERE id=$2', [status, id]);
+
+      // optional: notify seller if admin set to live or removed
+      try {
+        if (status === 'live' || status === 'removed' || status === 'declined') {
+          const sellerRow = (await client.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [q.rows[0].seller_id])).rows[0];
+          if (sellerRow) {
+            if (status === 'live') await sendEmail({ to: sellerRow.email || sellerRow.username, subject:'Ad approved', text:`Your ad ${id} is now live.` });
+            if (status === 'removed' || status === 'declined') await sendEmail({ to: sellerRow.email || sellerRow.username, subject:'Ad removed/declined', text:`Your ad ${id} was removed/declined by admin.` });
+          }
+        }
+      } catch (e) { console.warn('admin status notify failed', e && e.message ? e.message : e); }
+
       return res.json({ success:true, message:'status-updated' });
     } finally { client.release(); }
-  } catch (err) { console.error('PATCH /api/ads/:id/status', err); return res.status(500).json({ success:false, message:'server-error' }); }
+  } catch (err) {
+    console.error('PATCH /api/ads/:id/status-admin', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success:false, message:'server-error' });
+  }
 });
 /////////////////////////////////////////////////////////////////////
 // Orders: release & confirm (buyer confirm -> schedule payout)
