@@ -1631,16 +1631,30 @@ app.post('/admin/ads/:id/decline', async (req, res) => {
   }
 });
 
-// DELETE /admin/ads/:id  — permanently remove an ad
-// Note: add adminAuth middleware when ready (e.g. app.delete('/admin/ads/:id', adminAuth, ...))
+// DELETE /admin/ads/:id — permanently remove an ad and dependent rows (payments, orders)
 app.delete('/admin/ads/:id', async (req, res) => {
   const id = req.params.id;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // try to delete the ad row permanently
-    const del = await client.query('DELETE FROM ads WHERE id=$1 RETURNING id', [id]);
+    // 1) collect orders that belong to this ad
+    const ordersQ = await client.query('SELECT id FROM orders WHERE ad_id = $1', [id]);
+    const orderIds = ordersQ.rows.map(r => r.id).filter(Boolean);
+
+    // 2) delete payments that belong to those orders (must delete payments referencing orders before deleting orders)
+    if (orderIds.length) {
+      await client.query('DELETE FROM payments WHERE order_id = ANY($1::text[])', [orderIds]);
+    }
+
+    // 3) delete payments that reference the ad directly
+    await client.query('DELETE FROM payments WHERE ad_id = $1', [id]);
+
+    // 4) delete orders for the ad
+    await client.query('DELETE FROM orders WHERE ad_id = $1', [id]);
+
+    // 5) finally delete the ad row
+    const del = await client.query('DELETE FROM ads WHERE id = $1 RETURNING id', [id]);
 
     if (!del.rows.length) {
       await client.query('ROLLBACK');
@@ -1648,16 +1662,14 @@ app.delete('/admin/ads/:id', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    console.info(`[admin][delete] permanently deleted ad ${id}`);
+    console.info(`[admin][delete] permanently deleted ad ${id} and related payments/orders`);
     return res.json({ success: true, message: 'deleted', id: del.rows[0].id });
   } catch (err) {
-    // rollback and return helpful error
-    try { await client.query('ROLLBACK'); } catch (e) {}
-    console.error('[admin][delete] error', err && (err.stack || err.message) || err);
+    try { await client.query('ROLLBACK'); } catch (e) { /* ignore rollback error */ }
+    console.error('[admin][delete] error', err && (err.stack || err.message) ? (err.stack || err.message) : err);
 
     // Postgres foreign key violation code: 23503
     if (err && err.code === '23503') {
-      // dependent rows exist (FK constraint) — inform client so they can decide
       return res.status(409).json({
         success: false,
         message: 'foreign-key-constraint',
