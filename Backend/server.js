@@ -708,16 +708,29 @@ app.get('/debug/ad/:id', async (req, res) => {
     client.release();
   }
 });
-// Add this in your backend temporarily
-app.get('/debug/db/:table', async (req, res) => {
-  const table = req.params.table;
+// TEMPORARY DEBUG ROUTE — show all main tables
+app.get('/debug/db/all', async (req, res) => {
+  const tables = ['users', 'ads', 'orders', 'payments', 'kyc_requests', 'jobs'];
+  const client = await pool.connect();
+
   try {
-    const client = await pool.connect();
-    const r = await client.query(`SELECT * FROM ${table} LIMIT 100`); // safe limit
+    const data = {};
+
+    for (const table of tables) {
+      try {
+        const r = await client.query(`SELECT * FROM ${table} LIMIT 100`); // limit rows for safety
+        data[table] = r.rows;
+      } catch (e) {
+        data[table] = { error: e.message };
+      }
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('DEBUG /db/all error', err);
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
     client.release();
-    return res.json({ success: true, table, rows: r.rows });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
   }
 });
 /////////////////////////////////////////////////////////////////////
