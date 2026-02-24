@@ -182,6 +182,9 @@ let selectedAd = null;
 let historyLimit = 6;
 let historyExpanded = false;
 
+// auto-refresh handle
+let autoRefreshInterval = null;
+
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function normImages(field){
   if (!field) return [];
@@ -208,7 +211,7 @@ function showToast(msg, ms=1600){
   setTimeout(()=>el.remove(), ms);
 }
 
-// fetchers
+// fetchers (visible)
 async function fetchPending(){
   pendingList.innerHTML = '<div class="small muted-note">Loading pending ads...</div>';
   pendingEmpty.style.display='none';
@@ -253,6 +256,40 @@ async function fetchHistory(){
     historyEmpty.style.display = 'block';
     historyEmpty.textContent = 'Network error fetching history.';
     HISTORY = [];
+  }
+}
+
+// fetchers (silent background refresh — do not show loading text)
+async function fetchPendingSilent(){
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/admin/ads?status=pending_verification`, { credentials:'include' });
+    const json = await resp.json().catch(()=>null);
+    if (!resp.ok || !json || !json.success) {
+      // don't disturb UI; just keep old PENDING if any
+      return;
+    }
+    PENDING = Array.isArray(json.ads) ? json.ads : [];
+    renderPending();
+  } catch (e) {
+    // silent: log only
+    console.debug('fetchPendingSilent error', e);
+  }
+}
+
+async function fetchHistorySilent(){
+  try {
+    const resLive = await fetch(`${BACKEND_BASE}/api/admin/ads?status=live`, { credentials:'include' });
+    const jLive = await resLive.json().catch(()=>null);
+    const live = (jLive && Array.isArray(jLive.ads)) ? jLive.ads : [];
+
+    const resRemoved = await fetch(`${BACKEND_BASE}/api/admin/ads?status=removed`, { credentials:'include' });
+    const jRemoved = await resRemoved.json().catch(()=>null);
+    const removed = (jRemoved && Array.isArray(jRemoved.ads)) ? jRemoved.ads : [];
+
+    HISTORY = [...live, ...removed].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+    renderHistory();
+  } catch (e) {
+    console.debug('fetchHistorySilent error', e);
   }
 }
 
@@ -387,51 +424,7 @@ async function doApprove(ad){
         return;
       }
     }
-    // fallback attempts
-    console.warn('Admin approve did not confirm live. Response:', r.status, j);
-    // try fallback patch route
-  } catch (e) {
-    console.warn('Admin approve error', e);
-  }
-
-  // fallback: try existing patch route
-  const ok = await updateStatusWithFallback(ad.id, 'live');
-  if (ok) showToast('Ad approved (fallback)');
-  else alert('Approve failed — server did not update ad. Check server logs.');
-  await refreshAll();
-}
-
-// Decline via admin endpoint (validate returned ad.status === removed)
-async function doDecline(ad){
-  if (!confirm(`Decline "${ad.title}" (mark as rejected)?`)) return;
-  const reason = prompt('Optional reason for decline (leave blank for none):') || '';
-  try {
-    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/decline`, {
-      method:'POST',
-      credentials:'include',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ reason })
-    });
-    const j = await r.json().catch(()=>null);
-    if (r.ok && j && j.success && j.ad && (String(j.ad.status).toLowerCase() === 'removed' || String(j.ad.status).toLowerCase() === 'declined')) {
-      showToast('Ad declined');
-      await refreshAll();
-      return;
-    }
-    if (r.ok && j && j.success) {
-      await refreshAll();
-      const found = findAdInData(ad.id);
-      if (found && ['removed','declined','rejected'].includes(String(found.status).toLowerCase())) {
-        showToast('Ad declined');
-        return;
-      }
-    }
-    console.warn('Admin decline did not confirm removed. Response:', r.status, j);
-  } catch (e) {
-    console.warn('Admin decline error', e);
-  }
-
-  // fallback
+    // fallback
   const ok = await updateStatusWithFallback(ad.id, 'removed');
   if (ok) showToast('Ad declined (fallback)');
   else alert('Decline failed — server did not update ad.');
@@ -560,9 +553,26 @@ deleteSelBtn.addEventListener('click', async ()=> {
 // initial & refresh
 async function refreshAll(){
   selectedAd = null; selInfo.innerHTML = 'None'; approveSelBtn.disabled = true; declineSelBtn.disabled = true; deleteSelBtn.disabled = true;
+  // visible refresh (shows loading placeholders)
   await Promise.all([fetchPending(), fetchHistory()]);
 }
-refreshAll();
+
+// start background auto-refresh (silent) every 10 seconds
+function startAutoRefresh(){
+  // avoid multiple intervals
+  if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+  autoRefreshInterval = setInterval(() => {
+    // run silent fetches in background, do not show loading placeholders
+    Promise.all([fetchPendingSilent(), fetchHistorySilent()]).catch(e => console.debug('autoRefresh error', e));
+  }, 10000);
+}
+
+// execute initial visible refresh, then start background silent refresh
+(async ()=> {
+  await refreshAll();
+  startAutoRefresh();
+})();
+
 </script>
 </body>
 </html>
