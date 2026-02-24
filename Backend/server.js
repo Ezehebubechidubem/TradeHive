@@ -709,28 +709,24 @@ app.get('/debug/ad/:id', async (req, res) => {
   }
 });
 // TEMPORARY DEBUG ROUTE — show all main tables
-app.get('/debug/db/all', async (req, res) => {
-  const tables = ['users', 'ads', 'orders', 'payments', 'kyc_requests', 'jobs'];
-  const client = await pool.connect();
-
+app.get('/debug/db/:table', async (req, res) => {
+  const table = req.params.table;
+  const statusFilter = req.query.status;  // <-- optional filter
   try {
-    const data = {};
+    const client = await pool.connect();
+    let sql = `SELECT * FROM ${table} LIMIT 100`;
+    const values = [];
 
-    for (const table of tables) {
-      try {
-        const r = await client.query(`SELECT * FROM ${table} LIMIT 100`); // limit rows for safety
-        data[table] = r.rows;
-      } catch (e) {
-        data[table] = { error: e.message };
-      }
+    if (statusFilter && table === 'ads') {
+      sql = `SELECT * FROM ads WHERE status = $1 LIMIT 100`;
+      values.push(statusFilter);
     }
 
-    return res.json({ success: true, data });
-  } catch (err) {
-    console.error('DEBUG /db/all error', err);
-    return res.status(500).json({ success: false, error: err.message });
-  } finally {
+    const r = await client.query(sql, values);
     client.release();
+    return res.json({ success: true, table, rows: r.rows });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
   }
 });
 /////////////////////////////////////////////////////////////////////
