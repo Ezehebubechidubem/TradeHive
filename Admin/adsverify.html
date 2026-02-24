@@ -50,6 +50,8 @@
   .modal-gallery{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
   .modal-gallery img{width:220px;height:140px;object-fit:cover;border-radius:8px}
   .muted-note{font-size:13px;color:var(--muted);margin-top:6px}
+  .refresh-spinner{display:inline-block;margin-left:8px;width:14px;height:14px;border-radius:50%;border:2px solid rgba(7,16,20,0.08);border-top-color:var(--gold2);animation:spin 800ms linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   @media (max-width:980px){
     .cols{grid-template-columns:1fr}
     .media{width:120px;height:84px}
@@ -76,7 +78,7 @@
 
         <div style="width:100%; max-width:960px; display:flex; gap:8px; justify-content:center; align-items:center; margin-top:8px;">
           <input id="search" class="search" placeholder="Search title, seller, location..." />
-          <button id="refresh" class="btn ghost">Refresh</button>
+          <button id="refresh" class="btn ghost">Refresh<span id="refreshSpinner" style="display:none" class="refresh-spinner" aria-hidden="true"></span></button>
         </div>
       </div>
 
@@ -98,23 +100,7 @@
           </section>
         </div>
 
-        <aside class="panel" aria-label="Admin panel">
-          <div>
-            <h3 style="margin:0">Selected ad</h3>
-            <div id="selInfo" class="small muted-note">None</div>
-          </div>
-          <div style="margin-top:10px">
-            <h3 style="margin:0">Quick actions</h3>
-            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-              <button id="approveSel" class="btn primary" disabled>Approve</button>
-              <button id="declineSel" class="btn ghost" disabled>Decline</button>
-              <button id="deleteSel" class="btn" disabled>Delete</button>
-            </div>
-          </div>
-          <div style="margin-top:12px">
-            <div class="small muted-note">Tip: Decline marks ad as removed (keeps record). Delete permanently removes ad if backend supports DELETE.</div>
-          </div>
-        </aside>
+     
       </div>
     </main>
   </div>
@@ -143,11 +129,14 @@
 
 <script>
 /* Admin verify page — primary actions call admin endpoints:
-   - GET  /api/admin/ads?status=...
+   - GET /api/admin/ads?status=...
    - POST /admin/ads/:id/approve
    - POST /admin/ads/:id/decline  { reason }
    - DELETE /admin/ads/:id
-   Fallbacks preserved to PATCH /api/ads/:id/status and other admin endpoints.
+
+   Changes made:
+   - Auto-refresh every 10s (non-overlapping)
+   - Refresh will MERGE new/updated ads into the displayed lists rather than clearing/UI wipe
 */
 
 const BACKEND_BASE = 'https://tradehive-s4e6.onrender.com';
@@ -159,6 +148,7 @@ const historyList = document.getElementById('historyList');
 const historyEmpty = document.getElementById('historyEmpty');
 const searchInput = document.getElementById('search');
 const refreshBtn = document.getElementById('refresh');
+const refreshSpinner = document.getElementById('refreshSpinner');
 const toggleHistoryBtn = document.getElementById('toggleHistory');
 
 const selInfo = document.getElementById('selInfo');
@@ -182,8 +172,10 @@ let selectedAd = null;
 let historyLimit = 6;
 let historyExpanded = false;
 
-// auto-refresh handle
-let autoRefreshInterval = null;
+// auto-refresh control
+let refreshIntervalMs = 10000; // 10 seconds
+let isRefreshing = false;
+let refreshTimer = null;
 
 function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function normImages(field){
@@ -211,92 +203,97 @@ function showToast(msg, ms=1600){
   setTimeout(()=>el.remove(), ms);
 }
 
-// fetchers (visible)
+// merging helpers: update existing list in-place (by id) or insert new items at front
+function mergeIntoList(existingList, incomingItems, sortComparator = null){
+  // Map existing index by id for quick lookup
+  const idxMap = new Map();
+  existingList.forEach((it, idx) => idxMap.set(String(it.id), idx));
+  incomingItems.forEach(item=>{
+    const key = String(item.id);
+    if (idxMap.has(key)){
+      // replace (shallow)
+      const i = idxMap.get(key);
+      existingList[i] = { ...existingList[i], ...item };
+    } else {
+      // new item: insert at start
+      existingList.unshift(item);
+    }
+  });
+  // If comparator provided, sort
+  if (sortComparator) existingList.sort(sortComparator);
+  return existingList;
+}
+
+function findAdInData(adId) {
+  const both = [...PENDING, ...HISTORY];
+  return both.find(x => String(x.id) === String(adId)) || null;
+}
+
+// fetchers — these no longer wipe DOM; they merge results into existing arrays
 async function fetchPending(){
-  pendingList.innerHTML = '<div class="small muted-note">Loading pending ads...</div>';
   pendingEmpty.style.display='none';
   try {
     const resp = await fetch(`${BACKEND_BASE}/api/admin/ads?status=pending_verification`, { credentials:'include' });
     const json = await resp.json().catch(()=>null);
     if (!resp.ok || !json || !json.success) {
-      pendingList.innerHTML = '';
-      pendingEmpty.style.display = 'block';
-      pendingEmpty.textContent = 'Could not fetch pending ads.';
-      PENDING = [];
+      // show message but keep current list
+      if (!PENDING.length) {
+        pendingEmpty.style.display = 'block';
+        pendingEmpty.textContent = 'Could not fetch pending ads.';
+      } else {
+        // keep existing entries, but inform admin
+        showToast('Failed to refresh pending list (see console).');
+      }
       return;
     }
-    PENDING = Array.isArray(json.ads) ? json.ads : [];
+    const incoming = Array.isArray(json.ads) ? json.ads : [];
+    // merge: update existing or add new ones
+    mergeIntoList(PENDING, incoming, (a,b) => new Date(b.created_at) - new Date(a.created_at));
     renderPending();
   } catch (e) {
     console.error('fetchPending', e);
-    pendingList.innerHTML = '';
-    pendingEmpty.style.display = 'block';
-    pendingEmpty.textContent = 'Network error fetching pending ads.';
-    PENDING = [];
+    if (!PENDING.length) {
+      pendingEmpty.style.display = 'block';
+      pendingEmpty.textContent = 'Network error fetching pending ads.';
+    } else {
+      showToast('Network error refreshing pending list.');
+    }
   }
 }
 
 async function fetchHistory(){
-  historyList.innerHTML = '<div class="small muted-note">Loading history...</div>';
   historyEmpty.style.display='none';
   try {
-    const resLive = await fetch(`${BACKEND_BASE}/api/admin/ads?status=live`, { credentials:'include' });
+    const [resLive, resRemoved] = await Promise.all([
+      fetch(`${BACKEND_BASE}/api/admin/ads?status=live`, { credentials:'include' }),
+      fetch(`${BACKEND_BASE}/api/admin/ads?status=removed`, { credentials:'include' })
+    ]);
     const jLive = await resLive.json().catch(()=>null);
-    const live = (jLive && Array.isArray(jLive.ads)) ? jLive.ads : [];
-
-    const resRemoved = await fetch(`${BACKEND_BASE}/api/admin/ads?status=removed`, { credentials:'include' });
     const jRemoved = await resRemoved.json().catch(()=>null);
+    const live = (jLive && Array.isArray(jLive.ads)) ? jLive.ads : [];
     const removed = (jRemoved && Array.isArray(jRemoved.ads)) ? jRemoved.ads : [];
 
-    HISTORY = [...live, ...removed].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+    // We'll merge live and removed into HISTORY, but keep HISTORY as a single list sorted by created_at desc
+    mergeIntoList(HISTORY, [...live, ...removed], (a,b) => new Date(b.created_at) - new Date(a.created_at));
+    // Optionally trim history to reasonable size (keep recent 1000)
+    if (HISTORY.length > 2000) HISTORY = HISTORY.slice(0, 2000);
     renderHistory();
   } catch (e) {
     console.error('fetchHistory', e);
-    historyList.innerHTML = '';
-    historyEmpty.style.display = 'block';
-    historyEmpty.textContent = 'Network error fetching history.';
-    HISTORY = [];
-  }
-}
-
-// fetchers (silent background refresh — do not show loading text)
-async function fetchPendingSilent(){
-  try {
-    const resp = await fetch(`${BACKEND_BASE}/api/admin/ads?status=pending_verification`, { credentials:'include' });
-    const json = await resp.json().catch(()=>null);
-    if (!resp.ok || !json || !json.success) {
-      // don't disturb UI; just keep old PENDING if any
-      return;
+    if (!HISTORY.length) {
+      historyEmpty.style.display = 'block';
+      historyEmpty.textContent = 'Network error fetching history.';
+    } else {
+      showToast('Network error refreshing history.');
     }
-    PENDING = Array.isArray(json.ads) ? json.ads : [];
-    renderPending();
-  } catch (e) {
-    // silent: log only
-    console.debug('fetchPendingSilent error', e);
   }
 }
 
-async function fetchHistorySilent(){
-  try {
-    const resLive = await fetch(`${BACKEND_BASE}/api/admin/ads?status=live`, { credentials:'include' });
-    const jLive = await resLive.json().catch(()=>null);
-    const live = (jLive && Array.isArray(jLive.ads)) ? jLive.ads : [];
-
-    const resRemoved = await fetch(`${BACKEND_BASE}/api/admin/ads?status=removed`, { credentials:'include' });
-    const jRemoved = await resRemoved.json().catch(()=>null);
-    const removed = (jRemoved && Array.isArray(jRemoved.ads)) ? jRemoved.ads : [];
-
-    HISTORY = [...live, ...removed].sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
-    renderHistory();
-  } catch (e) {
-    console.debug('fetchHistorySilent error', e);
-  }
-}
-
-// renders
+// renders (unchanged look/behavior) — they read from PENDING and HISTORY arrays
 function renderPending(){
   const q = (searchInput.value||'').trim().toLowerCase();
   const items = PENDING.filter(a => !q || ((a.title||'') + ' ' + (a.location||'') + ' ' + (a.seller_id||'') + ' ' + (a.description||'')).toLowerCase().includes(q));
+  // don't clear UI aggressively: replace children but preserve scroll where possible
   pendingList.innerHTML = '';
   if (!items.length) { pendingEmpty.style.display='block'; pendingEmpty.textContent='No pending ads.'; return; }
   pendingEmpty.style.display='none';
@@ -409,55 +406,109 @@ async function doApprove(ad){
     const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/approve`, { method:'POST', credentials:'include' });
     const j = await r.json().catch(()=>null);
     if (r.ok && j && j.success && j.ad && String(j.ad.status).toLowerCase() === 'live') {
+      // update local cache
+      mergeIntoList(HISTORY, [j.ad], (a,b)=> new Date(b.created_at) - new Date(a.created_at));
+      // remove from pending locally if present
+      PENDING = PENDING.filter(x => String(x.id) !== String(ad.id));
+      renderPending(); renderHistory();
       showToast('Ad approved');
-      await refreshAll();
       return;
     }
-    // if server returned a different shape, try best-effort checks
     if (r.ok && j && j.success) {
-      // server accepted but didn't return ad: refresh & check DB via listing
       await refreshAll();
-      // check if ad moved to live in latest data
       const found = findAdInData(ad.id);
       if (found && String(found.status).toLowerCase() === 'live') {
         showToast('Ad approved');
         return;
       }
     }
-    // fallback
+    console.warn('Admin approve did not confirm live. Response:', r.status, j);
+  } catch (e) {
+    console.warn('Admin approve error', e);
+  }
+
+  // fallback: try existing patch route
+  const ok = await updateStatusWithFallback(ad.id, 'live');
+  if (ok) {
+    // refresh and show
+    await refreshAll();
+    showToast('Ad approved (fallback)');
+  } else {
+    alert('Approve failed — server did not update ad. Check server logs.');
+    await refreshAll();
+  }
+}
+
+// Decline via admin endpoint (validate returned ad.status === removed)
+async function doDecline(ad){
+  if (!confirm(`Decline "${ad.title}" (mark as rejected)?`)) return;
+  const reason = prompt('Optional reason for decline (leave blank for none):') || '';
+  try {
+    const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}/decline`, {
+      method:'POST',
+      credentials:'include',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ reason })
+    });
+    const j = await r.json().catch(()=>null);
+    if (r.ok && j && j.success && j.ad && (String(j.ad.status).toLowerCase() === 'removed' || String(j.ad.status).toLowerCase() === 'declined')) {
+      // update local caches
+      mergeIntoList(HISTORY, [j.ad], (a,b)=> new Date(b.created_at) - new Date(a.created_at));
+      PENDING = PENDING.filter(x => String(x.id) !== String(ad.id));
+      renderPending(); renderHistory();
+      showToast('Ad declined');
+      return;
+    }
+    if (r.ok && j && j.success) {
+      await refreshAll();
+      const found = findAdInData(ad.id);
+      if (found && ['removed','declined','rejected'].includes(String(found.status).toLowerCase())) {
+        showToast('Ad declined');
+        return;
+      }
+    }
+    console.warn('Admin decline did not confirm removed. Response:', r.status, j);
+  } catch (e) {
+    console.warn('Admin decline error', e);
+  }
+
+  // fallback
   const ok = await updateStatusWithFallback(ad.id, 'removed');
   if (ok) showToast('Ad declined (fallback)');
   else alert('Decline failed — server did not update ad.');
   await refreshAll();
 }
 
-// Permanently delete via admin endpoint (validate response)
+// Permanently delete via admin endpoint (no soft fallback here - attempt permanent delete)
 async function confirmDelete(ad){
   if (!confirm(`Permanently DELETE ad "${ad.title}"? This is irreversible.`)) return;
   try {
     const r = await fetch(`${BACKEND_BASE}/admin/ads/${encodeURIComponent(ad.id)}`, { method:'DELETE', credentials:'include' });
     const j = await r.json().catch(()=>null);
     if (r.ok && j && j.success) {
+      // remove locally
+      PENDING = PENDING.filter(x => String(x.id) !== String(ad.id));
+      HISTORY = HISTORY.filter(x => String(x.id) !== String(ad.id));
+      renderPending(); renderHistory();
       showToast('Ad deleted');
-      await refreshAll();
+      return;
+    }
+    // if FK blocked or other error, show helpful message
+    if (r.status === 409) {
+      const detail = (j && j.detail) ? j.detail : (j && j.message) ? j.message : 'Foreign key constraint prevents delete.';
+      alert('Cannot permanently delete: dependent records exist. See console for details.\n\n' + detail);
+      console.warn('Delete blocked (FK):', j);
       return;
     }
     console.warn('Admin delete not ok', r.status, j);
+    alert((j && j.message) ? j.message : 'Delete failed (see console).');
   } catch(e){
     console.warn('Admin delete error', e);
+    alert('Network error while deleting — see console.');
   }
 
-  // fallback - soft remove
-  const ok = await updateStatusWithFallback(ad.id, 'removed');
-  if (ok) showToast('Deleted (soft)');
-  else alert('Delete failed — server did not delete ad.');
+  // refresh afterwards to reflect any changes
   await refreshAll();
-}
-
-// helper: locate ad in current cached PENDING/HISTORY
-function findAdInData(adId) {
-  const both = [...PENDING, ...HISTORY];
-  return both.find(x => String(x.id) === String(adId)) || null;
 }
 
 // fallback helper (keeps previous fallback behavior)
@@ -529,50 +580,51 @@ async function modalActionDecline(ad){
   modalBackdrop.style.display='none';
 }
 
-// handlers
+// search + refresh handlers
 searchInput.addEventListener('input', ()=> { renderPending(); renderHistory(); });
-refreshBtn.addEventListener('click', ()=> refreshAll());
+refreshBtn.addEventListener('click', ()=> refreshAll(true));
 toggleHistoryBtn.addEventListener('click', ()=> { historyExpanded = !historyExpanded; renderHistory(); });
 
 approveSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Approve selected ad?')) return;
   await doApprove(selectedAd);
-  await refreshAll();
 });
 declineSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Decline selected ad?')) return;
   await doDecline(selectedAd);
-  await refreshAll();
 });
 deleteSelBtn.addEventListener('click', async ()=> {
   if (!selectedAd) return; if (!confirm('Delete selected ad permanently?')) return;
   await confirmDelete(selectedAd);
-  await refreshAll();
 });
 
 // initial & refresh
-async function refreshAll(){
-  selectedAd = null; selInfo.innerHTML = 'None'; approveSelBtn.disabled = true; declineSelBtn.disabled = true; deleteSelBtn.disabled = true;
-  // visible refresh (shows loading placeholders)
-  await Promise.all([fetchPending(), fetchHistory()]);
+async function refreshAll(forceImmediate = false){
+  // if forceImmediate true we run now even if a refresh is in progress
+  if (isRefreshing && !forceImmediate) return;
+  isRefreshing = true;
+  refreshSpinner.style.display = 'inline-block';
+  try {
+    await Promise.all([fetchPending(), fetchHistory()]);
+  } finally {
+    isRefreshing = false;
+    refreshSpinner.style.display = 'none';
+  }
 }
 
-// start background auto-refresh (silent) every 10 seconds
+// start auto refresh (non-overlapping)
 function startAutoRefresh(){
-  // avoid multiple intervals
-  if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-  autoRefreshInterval = setInterval(() => {
-    // run silent fetches in background, do not show loading placeholders
-    Promise.all([fetchPendingSilent(), fetchHistorySilent()]).catch(e => console.debug('autoRefresh error', e));
-  }, 10000);
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(()=> {
+    if (!isRefreshing) refreshAll();
+  }, refreshIntervalMs);
 }
 
-// execute initial visible refresh, then start background silent refresh
-(async ()=> {
-  await refreshAll();
+// init
+(async ()=>{
+  await refreshAll(true);
   startAutoRefresh();
 })();
-
 </script>
 </body>
 </html>
