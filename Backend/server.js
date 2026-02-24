@@ -708,7 +708,18 @@ app.get('/debug/ad/:id', async (req, res) => {
     client.release();
   }
 });
-
+// Add this in your backend temporarily
+app.get('/debug/db/:table', async (req, res) => {
+  const table = req.params.table;
+  try {
+    const client = await pool.connect();
+    const r = await client.query(`SELECT * FROM ${table} LIMIT 100`); // safe limit
+    client.release();
+    return res.json({ success: true, table, rows: r.rows });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
 /////////////////////////////////////////////////////////////////////
 // ADS routes: create ad (idempotent style) - registers ad + payment
 /////////////////////////////////////////////////////////////////////
