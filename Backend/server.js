@@ -686,6 +686,28 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.get('/', (req,res)=> res.send('TradeHive backend running'));
+/////////////////////////////////////////////////////////
+// GET /debug/ad/:id
+// Returns the current status and some info of a single ad
+app.get('/debug/ad/:id', async (req, res) => {
+  const id = req.params.id;
+  const client = await pool.connect();
+  try {
+    const q = await client.query(
+      `SELECT id, title, status, created_at, updated_at FROM ads WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    if (!q.rows.length) {
+      return res.json({ success: true, ad: null, message: 'ad-not-found' });
+    }
+    return res.json({ success: true, ad: q.rows[0] });
+  } catch (err) {
+    console.error('GET /debug/ad/:id error', err);
+    return res.status(500).json({ success: false, message: 'server-error' });
+  } finally {
+    client.release();
+  }
+});
 
 /////////////////////////////////////////////////////////////////////
 // ADS routes: create ad (idempotent style) - registers ad + payment
