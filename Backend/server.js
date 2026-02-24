@@ -839,20 +839,75 @@ function normalizeImagesField(imagesField) {
   // fallback to empty array
   return [];
 }
-app.get('/api/ads/:id', async (req, res) => {
+// GET /api/ads
+// - If user_id (or user) query is provided, return only that user's LIVE ads.
+// - Otherwise act as a general listing (optional ?status=..., ?q=..., ?limit=..., ?offset=...).
+app.get('/api/ads', async (req, res) => {
   try {
-    const id = req.params.id;
+    const userId = req.query.user_id || req.query.user || null;
+    const statusParam = (typeof req.query.status !== 'undefined' && req.query.status !== '') ? String(req.query.status) : null;
+    const q = (req.query.q || '').toString().trim();
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // helper to normalize images field (same as used elsewhere)
+    const normalizeImagesField = function(imagesField) {
+      if (!imagesField) return [];
+      if (Array.isArray(imagesField)) return imagesField;
+      if (typeof imagesField === 'string') {
+        try {
+          const parsed = JSON.parse(imagesField);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          return [imagesField];
+        }
+      }
+      return [];
+    };
+
     const client = await pool.connect();
     try {
-      const r = await client.query('SELECT a.*, u.email as seller_email, u.fullname as seller_name FROM ads a LEFT JOIN users u ON u.id=a.seller_id WHERE a.id=$1 LIMIT 1', [id]);
-      if (!r.rows.length) return res.status(404).json({ success:false, message:'not-found' });
-      const ad = r.rows[0];
-      ad.images = normalizeImagesField(ad.images);
-      return res.json({ success:true, ad });
-    } finally { client.release(); }
-  } catch (e) {
-    console.error('GET /api/ads/:id', e);
-    return res.status(500).json({ success:false });
+      // If a userId is supplied, return only that user's LIVE ads (enforced)
+      if (userId) {
+        const r = await client.query(
+          `SELECT * FROM ads WHERE seller_id = $1 AND status = $2 ORDER BY created_at DESC`,
+          [userId, 'live']
+        );
+        const ads = r.rows.map(ad => ({ ...ad, images: normalizeImagesField(ad.images) }));
+        return res.json({ success: true, ads });
+      }
+
+      // No userId: general listing with optional filters (backwards compatible)
+      const where = [];
+      const values = [];
+      let idx = 1;
+
+      if (statusParam) {
+        where.push(`a.status = $${idx++}`);
+        values.push(statusParam);
+      }
+
+      if (q) {
+        const qParam = `%${q}%`;
+        where.push(`(a.title ILIKE $${idx} OR a.description ILIKE $${idx} OR a.location ILIKE $${idx})`);
+        values.push(qParam);
+        idx++;
+      }
+
+      let sql = `SELECT a.* FROM ads a`;
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ` ORDER BY a.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+      values.push(limit, offset);
+
+      const r = await client.query(sql, values);
+      const ads = r.rows.map(ad => ({ ...ad, images: normalizeImagesField(ad.images) }));
+      return res.json({ success: true, ads });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('GET /api/ads error', err && (err.stack || err.message) ? (err.stack || err.message) : err);
+    return res.status(500).json({ success: false, message: 'server-error' });
   }
 });
 
