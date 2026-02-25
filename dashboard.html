@@ -868,10 +868,9 @@ function renderCart(){
 }
 
 /* ---------------------------
-  Checkout → create orders & payments (POST /api/ads/:id/buy)
-  - For each cart item we call your backend buy route.
-  - If backend returns payment init info with redirect URL we open it.
-  - If multiple payments (multiple sellers) we open each init URL (one per payment).
+  Checkout → create orders & payments (single combined payment)
+  - Sends full cart once to POST /api/ads/:id/buy with items array
+  - Backend supports combined checkout (items array) and returns a single init session
   --------------------------- */
 document.getElementById('checkoutNow').addEventListener('click', async () => {
   const cart = readCart();
@@ -883,403 +882,67 @@ document.getElementById('checkoutNow').addEventListener('click', async () => {
     return;
   }
 
-  // group by ad id (cart items contain product ids that should match backend ad ids)
-  // We'll perform POST /api/ads/:id/buy for each item
-  const results = [];
-  const redirectUrls = [];
-  const errors = [];
+  showToast('Creating combined order...');
 
-  // inform user we're processing
-  showToast('Creating orders...');
-
+  // Build items array for backend: try to map UI product ids to real backend ad ids
+  const items = [];
+  const unmapped = [];
   for (const item of cart) {
-    // item.id must correspond to a backend ad id; if it looks like a demo product id (starts with 'p' or 'ad_' without numeric id),
-    // try to use the raw mapping if BACKEND_ADS contains it; otherwise report and skip.
     let adId = item.id;
-    // If product is from BACKEND_ADS map, prefer original ad id
+    // If product is from BACKEND_ADS map, prefer original ad id (raw.id)
     if (BACKEND_AVAILABLE && Array.isArray(BACKEND_ADS)) {
       const match = BACKEND_ADS.find(x => String(x.id) === String(item.id) || (x.raw && String(x.raw.id) === String(item.id)));
       if (match && match.raw && match.raw.id) adId = String(match.raw.id);
+      else if (match && match.id && String(match.id).startsWith('ad_') && match.raw && match.raw.id) adId = String(match.raw.id);
     }
-
-    try {
-      // idempotency key for this cart item
-      const idempotency_key = `cart_${item.id}_${(Date.now()).toString().slice(-6)}`;
-
-      // call buy route
-      const resp = await fetch(`${BACKEND_BASE}/api/ads/${encodeURIComponent(adId)}/buy`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ buyer_id: u.id, qty: item.qty || 1, idempotency_key })
-      }).catch(e => null);
-
-      if (!resp) {
-        errors.push({ item, message: 'Network error' }); continue;
-      }
-      const j = await resp.json().catch(()=>null);
-      results.push({ item, status: resp.status, body: j });
-
-      // if provider init returned, attempt to extract redirect URL
-      if (j && j.init) {
-        // common provider keys
-        const init = j.init;
-        let redirect = null;
-        if (init.data) redirect = init.data.authorization_url || init.data.link || init.data.checkout_url || null;
-        redirect = redirect || init.url || init.authorization_url || init.link || (init.session && init.session.url) || null;
-        // also some backends include init.authorization_url at top, etc.
-        if (redirect) redirectUrls.push({ item, url: redirect, paymentId: j.paymentId || (j.init && j.init.data && j.init.data.reference) || null });
-      }
-    } catch (e) {
-      errors.push({ item, message: (e && e.message) ? e.message : String(e) });
-    }
-  }
-
-  // handle results
-  if (errors.length) {
-    console.warn('Checkout errors', errors);
-    alert('Some items could not be created. See console for details.');
-  }
-
-  if (redirectUrls.length === 0) {
-    // no provider redirect returned for any payment
-    // show summary to user and clear cart (orders were created server-side if backend returned success)
-    let successCount = results.filter(r => r.status >=200 && r.status < 300).length;
-    if (successCount > 0) {
-      alert(`Created ${successCount} order(s). Please check My Orders for details.`);
-      writeCart([]); renderCart();
-      // try to navigate to myorders page
-      window.location.href = 'myorders.html';
+    // If adId still looks like a demo id (starts with 'p' or 'ad_' and no numeric real id), mark unmapped
+    const looksDemo = typeof adId === 'string' && (/^p\d|^p[^\d]|^ad_/.test(adId));
+    if (looksDemo && (!BACKEND_ADS || !BACKEND_ADS.find(x => String(x.id) === String(item.id) || (x.raw && String(x.raw.id) === String(item.id))))) {
+      unmapped.push(item);
     } else {
-      alert('No payment initiation returned. Check server logs.');
+      items.push({ ad_id: adId, qty: item.qty || 1 });
     }
+  }
+
+  if (unmapped.length) {
+    console.warn('Unmapped cart items (demo/local only):', unmapped);
+    alert('Some items in your cart are demo items and cannot be purchased. Remove them or refresh the page.');
     return;
   }
 
-  // If only one redirect -> go there
-  if (redirectUrls.length === 1) {
-    const url = redirectUrls[0].url;
-    // redirect user to provider checkout
-    window.location.href = url;
+  if (!items.length) {
+    alert('No valid cart items to checkout.');
     return;
   }
 
-  // If multiple redirects (multiple seller payments), open each in new tab (best-effort)
-  // and show a short summary for the user to complete the payments.
-  const opened = [];
-  for (const r of redirectUrls) {
-    try {
-      const w = window.open(r.url, '_blank');
-      if (w) opened.push(r);
-    } catch(e){}
-  }
+  // build idempotency key
+  const idempotency_key = `cart_${u.id}_${Date.now()}`;
 
-  // Clear cart (orders already created) and notify user
-  writeCart([]);
-  renderCart();
-
-  let message = `Created ${results.length} order(s). ${redirectUrls.length} payment pages opened for completion.`;
-  message += '\nIf any payment didn\'t open, check "My Orders" and contact support.';
-  alert(message);
-  // redirect to my orders
-  window.location.href = 'myorders.html';
-});
-
-/* ---------------------------
-  Helper: add to cart & UI confirmations
-   --------------------------- */
-function addToCart(product, qty, showConfirm=false){
-  const cart = readCart();
-  const found = cart.find(i=>i.id===product.id);
-  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
-  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
-  writeCart(cart);
-  if(showConfirm){
-    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
-    document.getElementById('confirmBackdrop').style.display='flex';
-  } else {
-    showToast('Added to cart');
-  }
-}
-
-/* ---------------------------
-  Cart modal toggle & behavior (unchanged visually)
-   --------------------------- */
-const cartBackdrop = document.getElementById('cartBackdrop');
-// ... (same toggleCart, close, renderCart calls) ...
-
-function toggleCart(fromDrawer = false){
-  const isOpen = cartBackdrop.style.display === 'flex';
-  if(isOpen){
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  } else {
-    renderCart();
-    cartBackdrop.style.display = 'flex';
-    cartBackdrop.setAttribute('aria-hidden','false');
-    if(fromDrawer) closeDrawer();
-    const checkoutBtn = document.getElementById('checkoutNow');
-    if (checkoutBtn) checkoutBtn.focus();
-  }
-}
-
-document.getElementById('openCartTop').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(false);
-});
-
-document.getElementById('linkCart').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(true);
-});
-
-cartBackdrop.addEventListener('click', (e)=>{
-  if(e.target === cartBackdrop) {
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  }
-});
-
-document.getElementById('closeCart').addEventListener('click', ()=> {
-  cartBackdrop.style.display='none';
-  cartBackdrop.setAttribute('aria-hidden','true');
-});
-
-/* Confirm popup handlers */
-document.getElementById('confirmProceed').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Proceeding to payment (demo). Order remains in cart.');
-});
-document.getElementById('confirmCancel').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Item kept in cart.');
-});
-
-/* ---------------------------
-  Product VIEW modal (details + gallery)
-   --------------------------- */
-const viewBackdrop = document.getElementById('viewBackdrop');
-const viewImageEl = document.getElementById('viewImage');
-const viewThumbs = document.getElementById('viewThumbs');
-const viewTitle = document.getElementById('viewName');
-const viewDesc = document.getElementById('viewDesc');
-const viewPrice = document.getElementById('viewPrice');
-const viewLoc = document.getElementById('viewLoc');
-const viewQty = document.getElementById('viewQty');
-let viewCurrentProduct = null;
-let viewCurrentIndex = 0;
-
-function openViewModal(product){
-  viewCurrentProduct = product;
-  viewCurrentIndex = 0;
-  viewTitle.textContent = product.title;
-  viewDesc.textContent = product.desc;
-  viewPrice.textContent = '₦' + Number(product.price).toLocaleString();
-  viewLoc.textContent = product.loc + ' • ' + product.qty + ' pcs';
-  viewQty.value = 1;
-  renderViewGallery(product.images);
-  viewImageEl.src = product.images[0];
-  viewBackdrop.style.display = 'flex';
-  viewBackdrop.setAttribute('aria-hidden','false');
-}
-
-function renderViewGallery(images){
-  viewThumbs.innerHTML = '';
-  images.forEach((src, i)=>{
-    const thumb = document.createElement('div');
-    thumb.className = 'view-thumb' + (i===0 ? ' active' : '');
-    thumb.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="thumb">`;
-    thumb.addEventListener('click', ()=> {
-      viewCurrentIndex = i;
-      viewImageEl.src = images[i];
-      Array.from(viewThumbs.children).forEach(c=>c.classList.remove('active'));
-      thumb.classList.add('active');
-    });
-    viewThumbs.appendChild(thumb);
-  });
-}
-
-document.getElementById('closeView').addEventListener('click', ()=> {
-  viewBackdrop.style.display='none';
-  viewBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('viewAdd').addEventListener('click', ()=>{
-  if(!viewCurrentProduct) return;
-  const q = Math.max(1, Math.min(viewCurrentProduct.qty, parseInt(viewQty.value || '1')));
-  addToCart(viewCurrentProduct, q, false);
-  renderCart(); // update totals & button
-  showToast('Added to cart');
-});
-
-/* ---------------------------
-  Drawer open/close + links (unchanged)
-   --------------------------- */
-const drawer = document.getElementById('drawer');
-const backdrop = document.getElementById('drawerBackdrop');
-document.getElementById('profileIcon').addEventListener('click', ()=> openDrawer());
-document.getElementById('hambBtn').addEventListener('click', ()=> openDrawer());
-document.getElementById('drawerClose').addEventListener('click', ()=> closeDrawer());
-backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
-
-function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
-function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
-
-/* quick link behaviors */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ closeDrawer(); window.location.href = 'sell.html'; });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); });
-
-/* ---------------------------
-  Bank modal: POST to /api/users/:id/bank (backend route you provided)
-   --------------------------- */
-const bankBackdrop = document.getElementById('bankBackdrop');
-document.getElementById('linkBank').addEventListener('click', (e)=>{ e.preventDefault(); openBankModal(); });
-document.getElementById('bankCancel').addEventListener('click', ()=> { bankBackdrop.style.display='none'; bankBackdrop.setAttribute('aria-hidden','true'); });
-
-document.getElementById('bankSave').addEventListener('click', async ()=>{
-  const name = document.getElementById('bankAccountName').value.trim();
-  const number = document.getElementById('bankAccountNumber').value.trim();
-  const bname = document.getElementById('bankName').value.trim();
-  const bcode = document.getElementById('bankCode').value.trim();
-
-  if(!name || !number || !bname){
-    showToast('Please complete account name, number & bank name');
-    return;
-  }
-
-  const u = readUser() || {};
-  const acct = { account_number: String(number), bank_code: String(bcode || ''), name: String(name) };
-
-  // store local copy
-  u.account_details = Object.assign({}, u.account_details || {}, acct);
-  writeUser(u);
-  showToast('Bank details saved locally');
-
-  // persist to backend: POST /api/users/:id/bank (preferred), fallback to PATCH /api/users/:id
-  if(u && u.id){
-    let ok = false;
-    try {
-      // preferred route: POST /api/users/:id/bank
-      const res = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}/bank`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        credentials: 'include',
-        body: JSON.stringify({ account_number: number, bank_code: bcode, name })
-      }).catch(()=>null);
-      if (res && res.ok) ok = true;
-    } catch(e){}
-
-    if(!ok){
-      try {
-        const res2 = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}`, {
-          method:'PATCH',
-          headers:{ 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ account_details: acct })
-        }).catch(()=>null);
-        if (res2 && res2.ok) ok = true;
-      } catch(e){}
-    }
-
-    if(ok) showToast('Bank details saved to server');
-    else showToast('Saved locally; server endpoint not available');
-  }
-
-  bankBackdrop.style.display='none';
-  bankBackdrop.setAttribute('aria-hidden','true');
-});
-
-function openBankModal(){
-  const u = readUser() || {};
-  const acct = (u && u.account_details) ? u.account_details : {};
-  document.getElementById('bankAccountName').value = acct.account_name || acct.name || '';
-  document.getElementById('bankAccountNumber').value = acct.account_number || acct.accountNumber || '';
-  document.getElementById('bankName').value = acct.bank_name || acct.bank || '';
-  document.getElementById('bankCode').value = acct.bank_code || acct.bank_code || '';
-  bankBackdrop.style.display='flex';
-  bankBackdrop.setAttribute('aria-hidden','false');
-  closeDrawer();
-}
-
-/* ---------------------------
-  Notifications / Orders polling (best-effort)
-   - Poll /api/my/orders?user_id=... to count active orders
-   - update navMessages badge if any pending/uncompleted orders
-   --------------------------- */
-async function pollOrderNotifications(){
-  const u = readUser();
-  if (!u || !u.id) return;
   try {
-    // try /api/my/orders first
-    const res = await fetch(`${BACKEND_BASE}/api/my/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' });
-    if (!res.ok) {
-      // fallback to /api/orders?user_id=
-      const r2 = await fetch(`${BACKEND_BASE}/api/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' }).catch(()=>null);
-      if (!r2 || !r2.ok) {
-        // endpoint missing — nothing to do
-        return;
-      }
-      const j2 = await r2.json().catch(()=>null);
-      if (j2 && j2.success && Array.isArray(j2.orders)) updateOrderBadge(j2.orders);
-      else if (Array.isArray(j2)) updateOrderBadge(j2);
+    const resp = await fetch(`${BACKEND_BASE}/api/ads/combined/buy`, { // try combined route first if you add it
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ buyer_id: u.id, idempotency_key, items })
+    }).catch(()=>null);
+
+    // If you don't have a dedicated /api/ads/combined/buy route, fallback to /api/ads/<any>/buy (backend accepts items array)
+    let json = null;
+    if (!resp) {
+      // network error
+      alert('Network error creating order. Try again.');
       return;
-    }
-    const j = await res.json().catch(()=>null);
-    if (j && j.success && Array.isArray(j.orders)) updateOrderBadge(j.orders);
-    else if (Array.isArray(j)) updateOrderBadge(j);
-  } catch(e){}
-}
-function updateOrderBadge(orders){
-  const navMessages = document.getElementById('navMessages');
-  if (!navMessages) return;
-  const pending = orders.filter(o => !['completed','released','cancelled'].includes((o.status||'').toLowerCase()));
-  // add small badge if pending.length > 0
-  if (pending.length) {
-    navMessages.classList.add('has-orders');
-    navMessages.setAttribute('title', `${pending.length} active order(s)`);
-    // show a little numeric badge
-    let b = navMessages.querySelector('.order-badge');
-    if (!b) {
-      b = document.createElement('div');
-      b.className = 'order-badge';
-      b.style.position = 'absolute';
-      b.style.top = '6px';
-      b.style.right = '8px';
-      b.style.background = 'red';
-      b.style.color = '#fff';
-      b.style.padding = '2px 6px';
-      b.style.borderRadius = '999px';
-      b.style.fontSize = '11px';
-      b.style.fontWeight = '800';
-      navMessages.appendChild(b);
-    }
-    b.textContent = pending.length;
-  } else {
-    navMessages.classList.remove('has-orders');
-    const b = navMessages.querySelector('.order-badge');
-    if (b) b.remove();
-  }
-}
-
-// poll every 15s
-setInterval(()=>{ pollOrderNotifications(); }, 15000);
-
-/* ---------------------------
-  Utilities & init
-   --------------------------- */
-function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function showToast(msg, ms=2200){ const t = document.getElementById('toast'); t.textContent = msg; t.style.display='block'; clearTimeout(showToast._t); showToast._t = setTimeout(()=> t.style.display='none', ms); }
-
-/* initial load */
-(async function init(){
-  setAvatarFromUser();
-  refreshUserFromServer();
-  initialAndPollAds(); // fetch backend ads + set up polling every 10s
-  renderCart();
-  renderProducts();
-  renderCart();
-  pollOrderNotifications();
-})();
-</script>
+    } else {
+      json = await resp.json().catch(()=>null);
+      if (!resp.ok) {
+        // If server returned 404 for /api/ads/combined/buy, try the original endpoint (backend accepts items array there)
+        if (resp.status === 404) {
+          const fallbackResp = await fetch(`${BACKEND_BASE}/api/ads/0/buy`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ buyer_id: u.id, idempotency_key, items })
+          }).catch(()=>null);
+          if (!fallbackResp) { alert('Netwo
 </body>
 </html>
