@@ -1164,3 +1164,154 @@ document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preven
 /* ---------------------------
   Bank modal: POST to /api/users/:id/bank (backend route you provided)
    --------------------------- */
+const bankBackdrop = document.getElementById('bankBackdrop');
+document.getElementById('linkBank').addEventListener('click', (e)=>{ e.preventDefault(); openBankModal(); });
+document.getElementById('bankCancel').addEventListener('click', ()=> { bankBackdrop.style.display='none'; bankBackdrop.setAttribute('aria-hidden','true'); });
+
+document.getElementById('bankSave').addEventListener('click', async ()=>{
+  const name = document.getElementById('bankAccountName').value.trim();
+  const number = document.getElementById('bankAccountNumber').value.trim();
+  const bname = document.getElementById('bankName').value.trim();
+  const bcode = document.getElementById('bankCode').value.trim();
+
+  if(!name || !number || !bname){
+    showToast('Please complete account name, number & bank name');
+    return;
+  }
+
+  const u = readUser() || {};
+  const acct = { account_number: String(number), bank_code: String(bcode || ''), name: String(name) };
+
+  // store local copy
+  u.account_details = Object.assign({}, u.account_details || {}, acct);
+  writeUser(u);
+  showToast('Bank details saved locally');
+
+  // persist to backend: POST /api/users/:id/bank (preferred), fallback to PATCH /api/users/:id
+  if(u && u.id){
+    let ok = false;
+    try {
+      // preferred route: POST /api/users/:id/bank
+      const res = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}/bank`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({ account_number: number, bank_code: bcode, name })
+      }).catch(()=>null);
+      if (res && res.ok) ok = true;
+    } catch(e){}
+
+    if(!ok){
+      try {
+        const res2 = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}`, {
+          method:'PATCH',
+          headers:{ 'Content-Type':'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ account_details: acct })
+        }).catch(()=>null);
+        if (res2 && res2.ok) ok = true;
+      } catch(e){}
+    }
+
+    if(ok) showToast('Bank details saved to server');
+    else showToast('Saved locally; server endpoint not available');
+  }
+
+  bankBackdrop.style.display='none';
+  bankBackdrop.setAttribute('aria-hidden','true');
+});
+
+function openBankModal(){
+  const u = readUser() || {};
+  const acct = (u && u.account_details) ? u.account_details : {};
+  document.getElementById('bankAccountName').value = acct.account_name || acct.name || '';
+  document.getElementById('bankAccountNumber').value = acct.account_number || acct.accountNumber || '';
+  document.getElementById('bankName').value = acct.bank_name || acct.bank || '';
+  document.getElementById('bankCode').value = acct.bank_code || acct.bank_code || '';
+  bankBackdrop.style.display='flex';
+  bankBackdrop.setAttribute('aria-hidden','false');
+  closeDrawer();
+}
+
+/* ---------------------------
+  Notifications / Orders polling (best-effort)
+   - Poll /api/my/orders?user_id=... to count active orders
+   - update navMessages badge if any pending/uncompleted orders
+   --------------------------- */
+async function pollOrderNotifications(){
+  const u = readUser();
+  if (!u || !u.id) return;
+  try {
+    // try /api/my/orders first
+    const res = await fetch(`${BACKEND_BASE}/api/my/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' });
+    if (!res.ok) {
+      // fallback to /api/orders?user_id=
+      const r2 = await fetch(`${BACKEND_BASE}/api/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' }).catch(()=>null);
+      if (!r2 || !r2.ok) {
+        // endpoint missing — nothing to do
+        return;
+      }
+      const j2 = await r2.json().catch(()=>null);
+      if (j2 && j2.success && Array.isArray(j2.orders)) updateOrderBadge(j2.orders);
+      else if (Array.isArray(j2)) updateOrderBadge(j2);
+      return;
+    }
+    const j = await res.json().catch(()=>null);
+    if (j && j.success && Array.isArray(j.orders)) updateOrderBadge(j.orders);
+    else if (Array.isArray(j)) updateOrderBadge(j);
+  } catch(e){}
+}
+function updateOrderBadge(orders){
+  const navMessages = document.getElementById('navMessages');
+  if (!navMessages) return;
+  const pending = orders.filter(o => !['completed','released','cancelled'].includes((o.status||'').toLowerCase()));
+  // add small badge if pending.length > 0
+  if (pending.length) {
+    navMessages.classList.add('has-orders');
+    navMessages.setAttribute('title', `${pending.length} active order(s)`);
+    // show a little numeric badge
+    let b = navMessages.querySelector('.order-badge');
+    if (!b) {
+      b = document.createElement('div');
+      b.className = 'order-badge';
+      b.style.position = 'absolute';
+      b.style.top = '6px';
+      b.style.right = '8px';
+      b.style.background = 'red';
+      b.style.color = '#fff';
+      b.style.padding = '2px 6px';
+      b.style.borderRadius = '999px';
+      b.style.fontSize = '11px';
+      b.style.fontWeight = '800';
+      navMessages.appendChild(b);
+    }
+    b.textContent = pending.length;
+  } else {
+    navMessages.classList.remove('has-orders');
+    const b = navMessages.querySelector('.order-badge');
+    if (b) b.remove();
+  }
+}
+
+// poll every 15s
+setInterval(()=>{ pollOrderNotifications(); }, 15000);
+
+/* ---------------------------
+  Utilities & init
+   --------------------------- */
+function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function showToast(msg, ms=2200){ const t = document.getElementById('toast'); t.textContent = msg; t.style.display='block'; clearTimeout(showToast._t); showToast._t = setTimeout(()=> t.style.display='none', ms); }
+
+/* initial load */
+(async function init(){
+  setAvatarFromUser();
+  refreshUserFromServer();
+  initialAndPollAds(); // fetch backend ads + set up polling every 10s
+  renderCart();
+  renderProducts();
+  renderCart();
+  pollOrderNotifications();
+})();
+</script>
+</body>
+</html>
