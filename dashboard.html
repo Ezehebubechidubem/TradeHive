@@ -934,15 +934,6 @@ document.getElementById('checkoutNow').addEventListener('click', async () => {
     } else {
       json = await resp.json().catch(()=>null);
       if (!resp.ok) {
-                // If you don't have a dedicated /api/ads/combined/buy route, fallback to /api/ads/<any>/buy (backend accepts items array)
-    let json = null;
-    if (!resp) {
-      // network error
-      alert('Network error creating order. Try again.');
-      return;
-    } else {
-      json = await resp.json().catch(()=>null);
-      if (!resp.ok) {
                 // If server returned 404 for /api/ads/combined/buy, try the original endpoint (backend accepts items array there)
         if (resp.status === 404) {
           const fallbackResp = await fetch(`${BACKEND_BASE}/api/ads/0/buy`, {
