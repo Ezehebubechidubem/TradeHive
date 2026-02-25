@@ -7,32 +7,580 @@
 <meta name="theme-color" content="#071014" />
 <link rel="icon" href="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" />
 <style>
-  /* ... ALL STYLES UNCHANGED — copied from your original file ... */
-  :root{
-    --white: #ffffff;
-    --page-bg: #f6f7f9;
-    --card: #ffffff;
-    --gold1: #FFB703;
-    --gold2: #F59E0B;
-    --muted: #6b7280;
-    --text: #071014;
-    --shadow: rgba(2,6,23,0.07);
-    --online: #08a039;
-    --offline: #9aa0a6;
-    --nav-bg: #071014;
-    --nav-icon: #e6eef8;
-  }
-  /* (styles truncated for brevity in this preview) — keep the exact styles from your original file */
-  /* Full original CSS should be copied here unchanged. */
+      <!-- top header -->
+  <div class="top" role="banner">
+    <div class="top-left">
+      <button class="hamb" id="hambBtn" title="Menu" aria-label="Open menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="#0b1220" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <div class="logo" aria-label="TradeHive logo">
+        <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive">
+      </div>
+    </div>
+
+    <div class="top-right">
+      <button class="icon" id="profileIcon" title="Profile" aria-label="Profile">
+        <div id="miniAvatar" style="width:34px;height:34px;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#071014" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </button>
+
+      <!-- top cart is ENABLED and clickable (now toggles) -->
+      <button class="cart-btn" id="openCartTop" title="Open Cart" aria-label="Open cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6h15l-1.5 9h-11L6 6zM6 6L4 2H2" stroke="#071014" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div>Cart <span class="cart-count" id="cartCount">0</span></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- drawer/backdrop -->
+  <div class="drawer-backdrop" id="drawerBackdrop" tabindex="-1"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" role="navigation" aria-label="Side menu">
+    <button class="drawer-close" id="drawerClose" title="Close menu" aria-label="Close">✕</button>
+
+    <div class="profile-row">
+      <div id="avatarWrap" class="avatar-wrap">
+        <div class="avatar" id="avatarBox">
+          <svg id="avatarSvg" viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="profile-info">
+        <div class="name" id="profileName">Guest</div>
+        <div class="sub" id="profileEmail">Not signed in</div>
+      </div>
+    </div>
+
+    <nav class="menu-list" aria-label="Main menu">
+      <a class="menu-item" href="#" id="linkProfile">
+        <div class="mi-icon" aria-hidden="true">👤</div><div><strong>Profile</strong><div style="font-size:12px;color:var(--muted)">View and edit profile</div></div>
+      </a>
+
+      <a class="menu-item" href="sell.html" id="linkSell">
+        <div class="mi-icon" aria-hidden="true">➕</div><div><strong>Sell Marketplace</strong><div style="font-size:12px;color:var(--muted)">Post new ad</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBank">
+        <div class="mi-icon" aria-hidden="true">🏦</div><div><strong>Bank Account</strong><div style="font-size:12px;color:var(--muted)">Add payout details</div></div>
+      </a>
+
+      <!-- DRAWER: My Cart (toggles cart modal) -->
+      <a class="menu-item" href="ads.html" id="linkCart">
+        <div class="mi-icon" aria-hidden="true">🛒</div><div><strong>My Cart</strong><div style="font-size:12px;color:var(--muted)">View cart & checkout</div></div>
+      </a>
+
+      <a class="menu-item" href="ads.html" id="linkAds">
+        <div class="mi-icon" aria-hidden="true">📦</div><div><strong>My Ads</strong><div style="font-size:12px;color:var(--muted)">Active & expired ads</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBoard">
+        <div class="mi-icon" aria-hidden="true">🏆</div><div><strong>Leaderboard</strong><div style="font-size:12px;color:var(--muted)">Top sellers & buyers</div></div>
+      </a>
+
+      <a class="menu-item" href="kyc.html" id="linkKyc">
+        <div class="mi-icon" aria-hidden="true">🔐</div><div><strong>KYC</strong><div style="font-size:12px;color:var(--muted)">Verify your identity</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="openSettings">
+        <div class="mi-icon" aria-hidden="true">⚙️</div><div><strong>Settings</strong><div style="font-size:12px;color:var(--muted)">Theme, account settings</div></div>
+      </a>
+
+      <div class="status-row">
+        <div style="font-weight:800">Status</div>
+        <label class="switch" title="Toggle online / offline">
+          <input id="statusSwitch" type="checkbox"><span class="slider"></span>
+        </label>
+      </div>
+
+      <a class="menu-item" href="#" id="linkServices"><div class="mi-icon" aria-hidden="true">🛠</div><div><strong>Services</strong><div style="font-size:12px;color:var(--muted)">Our services</div></div></a>
+      <a class="menu-item" href="#" id="linkContact"><div class="mi-icon" aria-hidden="true">✉️</div><div><strong>Contact us</strong><div style="font-size:12px;color:var(--muted)">Get help & support</div></div></a>
+      <a class="menu-item" href="#" id="linkLogout"><div class="mi-icon" aria-hidden="true">🚪</div><div><strong>Logout</strong><div style="font-size:12px;color:var(--muted)">Sign out</div></div></a>
+    </nav>
+  </aside>
+
+  <!-- main content area -->
+  <main class="content" id="mainContent" role="main">
+    <div class="controls" aria-label="Category selection">
+      <div class="cat active" data-cat="All">All</div>
+      <div class="cat" data-cat="Foods">Foods</div>
+      <div class="cat" data-cat="Clothing">Clothing</div>
+      <div class="cat" data-cat="Electronics & Gadgets">Electronics & Gadgets</div>
+    </div>
+
+    <div class="subcats" id="subcats" aria-hidden="false">
+      <!-- subcats will be injected -->
+    </div>
+
+    <section class="grid" id="products" aria-live="polite">
+      <!-- products injected by JS -->
+    </section>
+  </main>
+
+  <!-- confirm popup -->
+  <div class="confirm-backdrop" id="confirmBackdrop" aria-hidden="true">
+    <div class="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h4 id="confirmTitle">Proceed to payment?</h4>
+      <div class="muted" id="confirmText">You added <strong id="confirmItem">1 × Item</strong> to cart. Would you like to proceed to payment or keep the order in your cart?</div>
+      <div style="height:12px"></div>
+      <div class="row">
+        <button class="btn gold" id="confirmProceed">Proceed</button>
+        <button class="btn ghost" id="confirmCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <!-- CART: centered overlay + modal -->
+  <div class="cart-backdrop" id="cartBackdrop" aria-hidden="true">
+    <div class="cart-modal" role="dialog" aria-modal="true" aria-labelledby="cartTitle">
+      <h3 id="cartTitle">My Cart</h3>
+      <div id="cartList" aria-live="polite"></div>
+      <div class="cart-footer" style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-weight:900">Total: <span id="cartTotal">₦0</span></div>
+        <div style="display:flex; gap:8px">
+          <button class="btn ghost" id="closeCart">Close</button>
+          <button class="btn gold" id="checkoutNow" disabled>Proceed to payment</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BANK modal (centered) -->
+  <div class="bank-backdrop" id="bankBackdrop" aria-hidden="true">
+    <div class="bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankTitle">
+      <h3 id="bankTitle">Payout / Bank details</h3>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account name</label>
+        <input id="bankAccountName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. John Doe" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account number</label>
+        <input id="bankAccountNumber" type="text" inputmode="numeric" pattern="[0-9]*" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 0123456789" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank name</label>
+        <input id="bankName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. Access Bank" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank code</label>
+        <input id="bankCode" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 044" />
+      </div>
+
+      <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn ghost" id="bankCancel">Cancel</button>
+        <button class="btn gold" id="bankSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+<!-- product view modal (new) -->
+  <div class="view-backdrop" id="viewBackdrop" aria-hidden="true">
+    <div class="view-modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+        <h3 id="viewTitle" style="margin:0; font-size:18px;">Product</h3>
+        <button class="btn ghost" id="closeView">Close</button>
+      </div>
+
+      <div class="view-media" id="viewMedia">
+        <img id="viewImage" alt="product image" src="" />
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-weight:900" id="viewPrice">₦0</div>
+        <div style="color:var(--muted)" id="viewLoc">Location</div>
+      </div>
+
+      <div style="margin-top:8px">
+        <div style="font-weight:800; font-size:16px" id="viewName">Product name</div>
+        <div style="color:var(--muted); margin-top:6px" id="viewDesc">Full description</div>
+      </div>
+
+      <div class="view-thumbs" id="viewThumbs" aria-hidden="false"></div>
+
+      <div style="display:flex; gap:8px; margin-top:12px; align-items:center;">
+        <label style="font-weight:700">Qty</label>
+        <input id="viewQty" type="number" min="1" value="1" style="width:84px; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="flex:1"></div>
+        <button class="btn gold" id="viewAdd">Add to cart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings modal & others (unchanged) -->
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h3 id="settingsTitle">Settings</h3>
+
+      <div style="margin-top:12px">
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Dark / Light</div>
+            <div style="color:var(--muted); font-size:13px">Toggle theme</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="themeSwitch"><span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Change password</div>
+            <div style="color:var(--muted); font-size:13px">Update your password</div>
+          </div>
+          <button class="btn ghost" id="openChangePassword">Open</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Account details</div>
+            <div style="color:var(--muted); font-size:13px">Update name, phone, location</div>
+          </div>
+          <button class="btn ghost" id="openAccountDetails">Open</button>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn ghost" id="closeSettings">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- change password modal -->
+  <div class="modal-backdrop" id="pwBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Change password</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Old password</label>
+        <input id="oldPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">New password</label>
+        <input id="newPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closePw">Cancel</button>
+          <button class="btn gold" id="savePw">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- account details modal -->
+  <div class="modal-backdrop" id="accBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Account details</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Full name</label>
+        <input id="accName" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">Phone</label>
+        <input id="accPhone" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">City / Town</label>
+        <input id="accCity" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closeAcc">Cancel</button>
+          <button class="btn gold" id="saveAcc">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast" role="status" aria-live="polite">Message</div>
+
+  <!-- floating action button for quick post -->
+  <div class="fab" id="fab" title="Post an ad" aria-label="Post an ad">＋</div>
+
+  <!-- bottom nav -->
+  <nav class="bottom-nav" role="navigation" aria-label="Bottom navigation">
+    <a href="#" class="nav-item active" data-page="home" id="navHome"><div class="ni-icon">🏠</div><div>Home</div></a>
+    <a href="ads.html" class="nav-item" data-page="jobs" id="navJobs"><div class="ni-icon">🧰</div><div>My Ads</div></a>
+    <div style="width:68px"></div>
+    <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
+    <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
+  </nav>
 </style>
 </head>
 <body>
 
-  <!-- ... ENTIRE ORIGINAL HTML (header, drawer, main content, modals, bottom nav, etc.) ... -->
-  <!-- I preserved all UI exactly as you provided. -->
-  <!-- (For brevity here I do not reprint the whole huge static markup — in your actual deployment, keep the full file and replace the <script> below.) -->
+      <!-- top header -->
+  <div class="top" role="banner">
+    <div class="top-left">
+      <button class="hamb" id="hambBtn" title="Menu" aria-label="Open menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="#0b1220" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <div class="logo" aria-label="TradeHive logo">
+        <img src="https://i.postimg.cc/zGrrd2nM/file-000000002c1c71f5961173dac3a26453.png" alt="TradeHive">
+      </div>
+    </div>
 
-  <!-- I'll assume you've kept the full HTML unchanged and only replace the JS below. -->
+    <div class="top-right">
+      <button class="icon" id="profileIcon" title="Profile" aria-label="Profile">
+        <div id="miniAvatar" style="width:34px;height:34px;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#071014" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </button>
+
+      <!-- top cart is ENABLED and clickable (now toggles) -->
+      <button class="cart-btn" id="openCartTop" title="Open Cart" aria-label="Open cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6h15l-1.5 9h-11L6 6zM6 6L4 2H2" stroke="#071014" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div>Cart <span class="cart-count" id="cartCount">0</span></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- drawer/backdrop -->
+  <div class="drawer-backdrop" id="drawerBackdrop" tabindex="-1"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" role="navigation" aria-label="Side menu">
+    <button class="drawer-close" id="drawerClose" title="Close menu" aria-label="Close">✕</button>
+
+    <div class="profile-row">
+      <div id="avatarWrap" class="avatar-wrap">
+        <div class="avatar" id="avatarBox">
+          <svg id="avatarSvg" viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </div>
+      <div class="profile-info">
+        <div class="name" id="profileName">Guest</div>
+        <div class="sub" id="profileEmail">Not signed in</div>
+      </div>
+    </div>
+
+    <nav class="menu-list" aria-label="Main menu">
+      <a class="menu-item" href="#" id="linkProfile">
+        <div class="mi-icon" aria-hidden="true">👤</div><div><strong>Profile</strong><div style="font-size:12px;color:var(--muted)">View and edit profile</div></div>
+      </a>
+
+      <a class="menu-item" href="sell.html" id="linkSell">
+        <div class="mi-icon" aria-hidden="true">➕</div><div><strong>Sell Marketplace</strong><div style="font-size:12px;color:var(--muted)">Post new ad</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBank">
+        <div class="mi-icon" aria-hidden="true">🏦</div><div><strong>Bank Account</strong><div style="font-size:12px;color:var(--muted)">Add payout details</div></div>
+      </a>
+
+      <!-- DRAWER: My Cart (toggles cart modal) -->
+      <a class="menu-item" href="ads.html" id="linkCart">
+        <div class="mi-icon" aria-hidden="true">🛒</div><div><strong>My Cart</strong><div style="font-size:12px;color:var(--muted)">View cart & checkout</div></div>
+      </a>
+
+      <a class="menu-item" href="ads.html" id="linkAds">
+        <div class="mi-icon" aria-hidden="true">📦</div><div><strong>My Ads</strong><div style="font-size:12px;color:var(--muted)">Active & expired ads</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="linkBoard">
+        <div class="mi-icon" aria-hidden="true">🏆</div><div><strong>Leaderboard</strong><div style="font-size:12px;color:var(--muted)">Top sellers & buyers</div></div>
+      </a>
+
+      <a class="menu-item" href="kyc.html" id="linkKyc">
+        <div class="mi-icon" aria-hidden="true">🔐</div><div><strong>KYC</strong><div style="font-size:12px;color:var(--muted)">Verify your identity</div></div>
+      </a>
+
+      <a class="menu-item" href="#" id="openSettings">
+        <div class="mi-icon" aria-hidden="true">⚙️</div><div><strong>Settings</strong><div style="font-size:12px;color:var(--muted)">Theme, account settings</div></div>
+      </a>
+
+      <div class="status-row">
+        <div style="font-weight:800">Status</div>
+        <label class="switch" title="Toggle online / offline">
+          <input id="statusSwitch" type="checkbox"><span class="slider"></span>
+        </label>
+      </div>
+
+      <a class="menu-item" href="#" id="linkServices"><div class="mi-icon" aria-hidden="true">🛠</div><div><strong>Services</strong><div style="font-size:12px;color:var(--muted)">Our services</div></div></a>
+      <a class="menu-item" href="#" id="linkContact"><div class="mi-icon" aria-hidden="true">✉️</div><div><strong>Contact us</strong><div style="font-size:12px;color:var(--muted)">Get help & support</div></div></a>
+      <a class="menu-item" href="#" id="linkLogout"><div class="mi-icon" aria-hidden="true">🚪</div><div><strong>Logout</strong><div style="font-size:12px;color:var(--muted)">Sign out</div></div></a>
+    </nav>
+  </aside>
+
+  <!-- main content area -->
+  <main class="content" id="mainContent" role="main">
+    <div class="controls" aria-label="Category selection">
+      <div class="cat active" data-cat="All">All</div>
+      <div class="cat" data-cat="Foods">Foods</div>
+      <div class="cat" data-cat="Clothing">Clothing</div>
+      <div class="cat" data-cat="Electronics & Gadgets">Electronics & Gadgets</div>
+    </div>
+
+    <div class="subcats" id="subcats" aria-hidden="false">
+      <!-- subcats will be injected -->
+    </div>
+
+    <section class="grid" id="products" aria-live="polite">
+      <!-- products injected by JS -->
+    </section>
+  </main>
+
+  <!-- confirm popup -->
+  <div class="confirm-backdrop" id="confirmBackdrop" aria-hidden="true">
+    <div class="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h4 id="confirmTitle">Proceed to payment?</h4>
+      <div class="muted" id="confirmText">You added <strong id="confirmItem">1 × Item</strong> to cart. Would you like to proceed to payment or keep the order in your cart?</div>
+      <div style="height:12px"></div>
+      <div class="row">
+        <button class="btn gold" id="confirmProceed">Proceed</button>
+        <button class="btn ghost" id="confirmCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <!-- CART: centered overlay + modal -->
+  <div class="cart-backdrop" id="cartBackdrop" aria-hidden="true">
+    <div class="cart-modal" role="dialog" aria-modal="true" aria-labelledby="cartTitle">
+      <h3 id="cartTitle">My Cart</h3>
+      <div id="cartList" aria-live="polite"></div>
+      <div class="cart-footer" style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-weight:900">Total: <span id="cartTotal">₦0</span></div>
+        <div style="display:flex; gap:8px">
+          <button class="btn ghost" id="closeCart">Close</button>
+          <button class="btn gold" id="checkoutNow" disabled>Proceed to payment</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BANK modal (centered) -->
+  <div class="bank-backdrop" id="bankBackdrop" aria-hidden="true">
+    <div class="bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankTitle">
+      <h3 id="bankTitle">Payout / Bank details</h3>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account name</label>
+        <input id="bankAccountName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. John Doe" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Account number</label>
+        <input id="bankAccountNumber" type="text" inputmode="numeric" pattern="[0-9]*" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 0123456789" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank name</label>
+        <input id="bankName" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. Access Bank" />
+      </div>
+      <div class="bank-row">
+        <label style="display:block;font-weight:700;margin-top:8px">Bank code</label>
+        <input id="bankCode" type="text" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(12,12,12,0.06)" placeholder="e.g. 044" />
+      </div>
+
+      <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn ghost" id="bankCancel">Cancel</button>
+        <button class="btn gold" id="bankSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+<!-- product view modal (new) -->
+  <div class="view-backdrop" id="viewBackdrop" aria-hidden="true">
+    <div class="view-modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+        <h3 id="viewTitle" style="margin:0; font-size:18px;">Product</h3>
+        <button class="btn ghost" id="closeView">Close</button>
+      </div>
+
+      <div class="view-media" id="viewMedia">
+        <img id="viewImage" alt="product image" src="" />
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-weight:900" id="viewPrice">₦0</div>
+        <div style="color:var(--muted)" id="viewLoc">Location</div>
+      </div>
+
+      <div style="margin-top:8px">
+        <div style="font-weight:800; font-size:16px" id="viewName">Product name</div>
+        <div style="color:var(--muted); margin-top:6px" id="viewDesc">Full description</div>
+      </div>
+
+      <div class="view-thumbs" id="viewThumbs" aria-hidden="false"></div>
+
+      <div style="display:flex; gap:8px; margin-top:12px; align-items:center;">
+        <label style="font-weight:700">Qty</label>
+        <input id="viewQty" type="number" min="1" value="1" style="width:84px; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="flex:1"></div>
+        <button class="btn gold" id="viewAdd">Add to cart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings modal & others (unchanged) -->
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h3 id="settingsTitle">Settings</h3>
+
+      <div style="margin-top:12px">
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Dark / Light</div>
+            <div style="color:var(--muted); font-size:13px">Toggle theme</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="themeSwitch"><span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Change password</div>
+            <div style="color:var(--muted); font-size:13px">Update your password</div>
+          </div>
+          <button class="btn ghost" id="openChangePassword">Open</button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div style="font-weight:800">Account details</div>
+            <div style="color:var(--muted); font-size:13px">Update name, phone, location</div>
+          </div>
+          <button class="btn ghost" id="openAccountDetails">Open</button>
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn ghost" id="closeSettings">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- change password modal -->
+  <div class="modal-backdrop" id="pwBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Change password</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Old password</label>
+        <input id="oldPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">New password</label>
+        <input id="newPw" type="password" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closePw">Cancel</button>
+          <button class="btn gold" id="savePw">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- account details modal -->
+  <div class="modal-backdrop" id="accBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Account details</h3>
+      <div style="margin-top:10px">
+        <label style="display:block;font-weight:700">Full name</label>
+        <input id="accName" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">Phone</label>
+        <input id="accPhone" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <label style="display:block;font-weight:700;margin-top:10px">City / Town</label>
+        <input id="accCity" type="text" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(12,12,12,0.06)" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn ghost" id="closeAcc">Cancel</button>
+          <button class="btn gold" id="saveAcc">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast" role="status" aria-live="polite">Message</div>
+
+  <!-- floating action button for quick post -->
+  <div class="fab" id="fab" title="Post an ad" aria-label="Post an ad">＋</div>
+
+  <!-- bottom nav -->
+  <nav class="bottom-nav" role="navigation" aria-label="Bottom navigation">
+    <a href="#" class="nav-item active" data-page="home" id="navHome"><div class="ni-icon">🏠</div><div>Home</div></a>
+    <a href="ads.html" class="nav-item" data-page="jobs" id="navJobs"><div class="ni-icon">🧰</div><div>My Ads</div></a>
+    <div style="width:68px"></div>
+    <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
+    <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
+  </nav>
 
 <script>
 /* ============================
