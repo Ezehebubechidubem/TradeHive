@@ -916,18 +916,161 @@ app.get('/api/ads', async (req, res) => {
 /////////////////////////////////////////////////////////////////////
 // POST /api/ads/:id/buy (create order + payment)
 /////////////////////////////////////////////////////////////////////
+// Replace /api/ads/:id/buy with this enhanced route
 app.post('/api/ads/:id/buy', async (req, res) => {
   const adId = req.params.id;
-  const { buyer_id, qty = 1, idempotency_key } = req.body || {};
+  const { buyer_id, qty = 1, idempotency_key, items } = req.body || {};
+
   if (!buyer_id) return res.status(400).json({ success:false, message:'buyer_id required' });
+
+  // helper: escrow tiers
+  function computeEscrow(totalNaira) {
+    if (totalNaira <= 10000) return 1000;
+    if (totalNaira <= 50000) return 2500;
+    if (totalNaira <= 100000) return 4500;
+    if (totalNaira <= 500000) return 5500;
+    if (totalNaira <= 1000000) return 7500;
+    return 9500;
+  }
 
   const client = await pool.connect();
   try {
+    // Idempotency check (same logic used elsewhere)
     if (idempotency_key) {
       const existing = (await client.query("SELECT p.* FROM payments p WHERE p.meta->>'idempotency_key' = $1 LIMIT 1", [idempotency_key])).rows[0];
-      if (existing) return res.json({ success:true, orderId: existing.order_id, paymentId: existing.id, note:'idempotent-return' });
+      if (existing) return res.json({ success:true, paymentId: existing.id, note:'idempotent-return', meta: existing.meta });
     }
 
+    // If an items array is present -> perform combined checkout
+    if (Array.isArray(items) && items.length > 0) {
+      // items: [{ ad_id, qty }]
+      // Validate ad ids
+      const adIds = items.map(i => String(i.ad_id));
+      // build placeholders
+      const placeholders = adIds.map((_, idx) => `$${idx+1}`).join(',');
+      const adsQ = await client.query(`SELECT * FROM ads WHERE id IN (${placeholders})`, adIds);
+      const adsById = {};
+      adsQ.rows.forEach(a => { adsById[String(a.id)] = a; });
+
+      // ensure all exist
+      for (const it of items) {
+        if (!adsById[String(it.ad_id)]) {
+          return res.status(404).json({ success:false, message:`ad-not-found:${it.ad_id}` });
+        }
+        const qn = Number(it.qty || 1);
+        if (qn <= 0) return res.status(400).json({ success:false, message:`invalid-qty-for:${it.ad_id}` });
+      }
+
+      // Begin transaction
+      await client.query('BEGIN');
+      const createdOrderIds = [];
+      let subtotal = 0;
+      const perSeller = {}; // seller_id => { items: [], total }
+
+      for (const it of items) {
+        const ad = adsById[String(it.ad_id)];
+        const qn = Number(it.qty || 1);
+        const amount = Number(ad.price || 0) * qn;
+        subtotal += amount;
+
+        const orderId = uid();
+        await client.query(
+          'INSERT INTO orders (id, ad_id, buyer_id, seller_id, qty, amount, currency, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+          [orderId, String(ad.id), buyer_id, ad.seller_id, qn, amount, ad.currency || 'NGN', 'pending_payment']
+        );
+        createdOrderIds.push(orderId);
+
+        const sId = String(ad.seller_id);
+        if (!perSeller[sId]) perSeller[sId] = { seller_id: sId, items: [], total: 0 };
+        perSeller[sId].items.push({ orderId, ad_id: String(ad.id), title: ad.title || '', qty: qn, amount });
+        perSeller[sId].total += amount;
+      }
+
+      // compute escrow and final amount
+      const escrow = computeEscrow(subtotal);
+      const finalAmount = subtotal + escrow;
+
+      // create single payment row (link to first order for compatibility)
+      const primaryOrder = createdOrderIds[0] || null;
+      const paymentId = uid();
+      const tx_ref = 'th_checkout_' + uid() + '_' + Date.now();
+      const metaObj = {
+        type: 'checkout',
+        order_ids: createdOrderIds,
+        subtotal,
+        escrow,
+        total: finalAmount,
+        idempotency_key: idempotency_key || null,
+        tx_ref
+      };
+
+      await client.query(
+        'INSERT INTO payments (id, order_id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        [paymentId, primaryOrder, null, buyer_id, PAYMENT_PROVIDER, finalAmount, 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]
+      );
+
+      // Initialize payment with provider once (single session)
+      const buyerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [buyer_id])).rows[0];
+      const email = buyerEmailRow ? buyerEmailRow.email : `buyer_${buyer_id}@example.com`;
+      const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/checkout-callback';
+      const initResp = await initializePayment({
+        provider: PAYMENT_PROVIDER,
+        email,
+        amount: finalAmount,
+        metadata: { ...metaObj, email },
+        currency: 'NGN',
+        callback_url: callback
+      });
+
+      if (initResp && (initResp.data || initResp.session)) {
+        const prov = initResp.data || initResp.session;
+        await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
+        const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
+        if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
+      }
+
+      // Commit transaction before notifications
+      await client.query('COMMIT');
+
+      // Notify sellers (best-effort async)
+      (async function notify() {
+        try {
+          const sellerIds = Object.keys(perSeller);
+          for (const sId of sellerIds) {
+            const summary = perSeller[sId];
+            const r = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [sId]);
+            const seller = r.rows[0];
+            // build simple email text
+            const lines = [];
+            lines.push(`Hello ${seller && (seller.fullname || seller.username) ? (seller.fullname || seller.username) : 'Seller'},`);
+            lines.push('');
+            lines.push(`A buyer (id: ${buyer_id}) placed order(s) for your items on TradeHive.`);
+            lines.push('');
+            summary.items.forEach(it => {
+              lines.push(`- ${it.qty} × ad ${it.ad_id} (${it.title || 'item'}) — ₦${Number(it.amount).toLocaleString()} (order: ${it.orderId})`);
+            });
+            lines.push('');
+            lines.push(`Total for you: ₦${Number(summary.total).toLocaleString()}`);
+            lines.push('');
+            lines.push('You will be paid after buyer confirmation and settlement. Please prepare to fulfill the order.');
+            const text = lines.join('\n');
+
+            if (seller && seller.email) {
+              try { await sendEmail({ to: seller.email, subject: `New order(s) on TradeHive — ${summary.items.length} item(s)`, text }); }
+              catch(e){ console.warn('notify seller email failed', sId, e && e.message ? e.message : e); }
+            }
+          }
+        } catch (e) {
+          console.warn('notify sellers error', e && e.message ? e.message : e);
+        }
+      })();
+
+      // Return combined payment init info
+      return res.json({ success:true, paymentId, orderIds: createdOrderIds, meta: metaObj, init: initResp });
+    }
+
+    // ---- FALLBACK: single-ad purchase (original behavior, preserved) ----
+    // Validate ad exists
     const adRes = (await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [adId])).rows[0];
     if (!adRes) return res.status(404).json({ success:false, message:'ad-not-found' });
 
@@ -935,12 +1078,20 @@ app.post('/api/ads/:id/buy', async (req, res) => {
     const orderId = uid();
 
     await client.query('BEGIN');
-    await client.query('INSERT INTO orders (id, ad_id, buyer_id, seller_id, qty, amount, currency, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [orderId, adId, buyer_id, adRes.seller_id, qty, amount, adRes.currency || 'NGN', 'pending_payment']);
+
+    await client.query(
+      'INSERT INTO orders (id, ad_id, buyer_id, seller_id, qty, amount, currency, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [orderId, adId, buyer_id, adRes.seller_id, qty, amount, adRes.currency || 'NGN', 'pending_payment']
+    );
 
     const paymentId = uid();
     const tx_ref = 'th_order_' + uid() + '_' + Date.now();
     const metaObj = { type:'order', orderId, paymentId, idempotency_key: idempotency_key || null, tx_ref };
-    await client.query('INSERT INTO payments (id, order_id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [paymentId, orderId, adId, buyer_id, PAYMENT_PROVIDER, amount, adRes.currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]);
+
+    await client.query(
+      'INSERT INTO payments (id, order_id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [paymentId, orderId, adId, buyer_id, PAYMENT_PROVIDER, amount, adRes.currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]
+    );
 
     const buyerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [buyer_id])).rows[0];
     const email = buyerEmailRow ? buyerEmailRow.email : `buyer_${buyer_id}@example.com`;
@@ -955,12 +1106,39 @@ app.post('/api/ads/:id/buy', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Notify seller (best-effort)
+    (async function notifySingleSeller() {
+      try {
+        const r = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [String(adRes.seller_id)]);
+        const seller = r.rows[0];
+        const lines = [];
+        lines.push(`Hello ${seller && (seller.fullname || seller.username) ? (seller.fullname || seller.username) : 'Seller'},`);
+        lines.push('');
+        lines.push(`A buyer (id: ${buyer_id}) placed an order for your ad ${adId} (${adRes.title || ''}).`);
+        lines.push('');
+        lines.push(`${qty} × ₦${Number(adRes.price).toLocaleString()} — Order id: ${orderId}`);
+        lines.push('');
+        lines.push('Please prepare to fulfill the order. You will be paid after buyer confirmation and settlement.');
+        const text = lines.join('\n');
+        if (seller && seller.email) {
+          try { await sendEmail({ to: seller.email, subject: `New order on TradeHive — ${adRes.title || 'item'}`, text }); }
+          catch(e){ console.warn('notify seller email failed', adRes.seller_id, e && e.message ? e.message : e); }
+        }
+      } catch (e) {
+        console.warn('notify single seller failed', e && e.message ? e.message : e);
+      }
+    })();
+
     return res.json({ success:true, orderId, paymentId, init: initResp });
+
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch(_) {}
-    console.error('POST /api/ads/:id/buy error', err);
+    console.error('POST /api/ads/:id/buy error', err && (err.stack || err.message) || err);
     return res.status(500).json({ success:false, message:'Server error' });
-  } finally { client.release(); }
+  } finally {
+    client.release();
+  }
 });
 
 /////////////////////////////////////////////////////////////////////
