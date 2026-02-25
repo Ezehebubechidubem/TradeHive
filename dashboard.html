@@ -542,7 +542,28 @@ async function refreshUserFromServer(){
     }
   } catch(e){ /* ignore */ }
 }
+/* bottom nav behaviors adjusted:
+   - Jobs (My Ads) -> ads.html
+   - FAB -> sell.html
+*/
+document.getElementById('navJobs').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'ads.html'; });
+document.getElementById('fab').addEventListener('click',(e)=>{ e.preventDefault(); window.location.href = 'sell.html'; });
+/* Logout */
+document.getElementById('linkLogout').addEventListener('click', (e)=>{
+  e.preventDefault();
+  clearUser();
+  showToast('Logged out');
+  // navigate to login
+  window.location.href = 'login.html';
+});
 
+/* toast helper */
+function showToast(msg, ms=2200){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> t.style.display='none', ms);
+}
 /* ---------------------------
   Status switch: use real backend endpoint /api/users/:id/online
    --------------------------- */
