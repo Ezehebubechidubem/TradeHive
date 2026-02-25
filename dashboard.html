@@ -456,7 +456,6 @@
     <a href="#" class="nav-item" data-page="messages" id="navMessages"><div class="ni-icon">💬</div><div>Notifications</div></a>
     <a href="#" class="nav-item" data-page="profile" id="navProfile"><div class="ni-icon">👤</div><div>Profile</div></a>
   </nav>
-
 <script>
 /* ============================
    Storage keys & helpers
@@ -789,14 +788,14 @@ async function renderProducts(){
   Cart UI & Escrow calculation
    --------------------------- */
 
+/* ===== UPDATED: use 3% escrow =====
+   This replaces the previous tiered fixed-fee model.
+   Escrow is computed as 3% of the cart subtotal (rounded to nearest naira).
+*/
 function computeEscrow(totalNaira) {
-  // totalNaira is number
-  if (totalNaira <= 10000) return 1000;
-  if (totalNaira <= 50000) return 2500;
-  if (totalNaira <= 100000) return 4500;
-  if (totalNaira <= 500000) return 5500;
-  if (totalNaira <= 1000000) return 7500;
-  return 9500;
+  if (!totalNaira || Number.isNaN(Number(totalNaira))) return 0;
+  const escrow = Math.round(Number(totalNaira) * 0.03);
+  return escrow;
 }
 
 function renderCart(){
@@ -834,8 +833,8 @@ function renderCart(){
       escrowRow.style.fontSize = '13px';
       cartFooter.insertBefore(escrowRow, cartFooter.firstChild);
     }
-    escrowRow.innerHTML = `<div style="display:flex;justify-content:space-between"><div>Escrow fee</div><div>₦${Number(escrow).toLocaleString()}</div></div>
-    <div style="font-size:12px;color:var(--muted);margin-top:6px">An escrow fee is added to protect buyers & sellers. This cart subtotal ₦${Number(subtotal).toLocaleString()} will attract an escrow of ₦${Number(escrow).toLocaleString()}.</div>`;
+    escrowRow.innerHTML = `<div style="display:flex;justify-content:space-between"><div>Escrow (3%)</div><div>₦${Number(escrow).toLocaleString()}</div></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:6px">An escrow fee of 3% is added to protect buyers & sellers. Cart subtotal ₦${Number(subtotal).toLocaleString()} → escrow ₦${Number(escrow).toLocaleString()} → total ₦${Number(grand).toLocaleString()}.</div>`;
   }
 
   // update cart count
@@ -935,356 +934,13 @@ document.getElementById('checkoutNow').addEventListener('click', async () => {
     } else {
       json = await resp.json().catch(()=>null);
       if (!resp.ok) {
-        // If server returned 404 for /api/ads/combined/buy, try the original endpoint (backend accepts items array there)
+                // If server returned 404 for /api/ads/combined/buy, try the original endpoint (backend accepts items array there)
         if (resp.status === 404) {
           const fallbackResp = await fetch(`${BACKEND_BASE}/api/ads/0/buy`, {
             method: 'POST',
             credentials: 'include',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ buyer_id: u.id, idempotency_key, items })
-          }).catch(()=>null);
-          if (!fallbackResp) { alert('Network error creating order (fallback).'); return; }
-          json = await fallbackResp.json().catch(()=>null);
-          if (!fallbackResp.ok) {
-            console.warn('Fallback checkout error', fallbackResp.status, json);
-            alert('Checkout failed. See console for details.');
-            return;
-          }
-        } else {
-          console.warn('Checkout error', resp.status, json);
-          alert('Checkout failed. See console for details.');
-          return;
-        }
-      }
-    }
+            body: JSON.stringify({ buyer_id: u.id
 
-    // Now handle provider init or success
-    if (json && json.init) {
-      // extract redirect url if present
-      const init = json.init;
-      let redirect = null;
-      if (init.data) redirect = init.data.authorization_url || init.data.link || init.data.checkout_url || null;
-      redirect = redirect || init.url || init.authorization_url || init.link || (init.session && init.session.url) || null;
-      if (redirect) {
-        // navigate to provider checkout (single combined session)
-        window.location.href = redirect;
-        return;
-      }
-    }
-
-    // If no init but success and order(s) created:
-    if (json && json.success) {
-      // clear cart and go to orders
-      writeCart([]); renderCart();
-      alert('Order(s) created. Check My Orders for details.');
-      window.location.href = 'myorders.html';
-      return;
-    }
-
-    // otherwise show failure
-    console.warn('Unexpected checkout response', json);
-    alert('Checkout returned unexpected response. See console for details.');
-  } catch (e) {
-    console.error('Checkout error', e);
-    alert('Checkout failed — see console for details.');
-  }
-});
-
-/* ---------------------------
-  Helper: add to cart & UI confirmations
-   --------------------------- */
-function addToCart(product, qty, showConfirm=false){
-  const cart = readCart();
-  const found = cart.find(i=>i.id===product.id);
-  if(found){ found.qty = Math.min(found.qty + qty, product.qty); }
-  else cart.push({ id:product.id, qty, title:product.title, price:product.price, img:product.images[0] });
-  writeCart(cart);
-  if(showConfirm){
-    document.getElementById('confirmItem').textContent = `${qty} × ${product.title}`;
-    document.getElementById('confirmBackdrop').style.display='flex';
-  } else {
-    showToast('Added to cart');
-  }
-}
-
-/* ---------------------------
-  Cart modal toggle & behavior (unchanged visually)
-   --------------------------- */
-const cartBackdrop = document.getElementById('cartBackdrop');
-// ... (same toggleCart, close, renderCart calls) ...
-
-function toggleCart(fromDrawer = false){
-  const isOpen = cartBackdrop.style.display === 'flex';
-  if(isOpen){
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  } else {
-    renderCart();
-    cartBackdrop.style.display = 'flex';
-    cartBackdrop.setAttribute('aria-hidden','false');
-    if(fromDrawer) closeDrawer();
-    const checkoutBtn = document.getElementById('checkoutNow');
-    if (checkoutBtn) checkoutBtn.focus();
-  }
-}
-
-document.getElementById('openCartTop').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(false);
-});
-
-document.getElementById('linkCart').addEventListener('click', (e)=>{
-  e.preventDefault();
-  toggleCart(true);
-});
-
-cartBackdrop.addEventListener('click', (e)=>{
-  if(e.target === cartBackdrop) {
-    cartBackdrop.style.display = 'none';
-    cartBackdrop.setAttribute('aria-hidden','true');
-  }
-});
-
-document.getElementById('closeCart').addEventListener('click', ()=> {
-  cartBackdrop.style.display='none';
-  cartBackdrop.setAttribute('aria-hidden','true');
-});
-
-/* Confirm popup handlers */
-document.getElementById('confirmProceed').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Proceeding to payment (demo). Order remains in cart.');
-});
-document.getElementById('confirmCancel').addEventListener('click', ()=>{
-  document.getElementById('confirmBackdrop').style.display='none';
-  showToast('Item kept in cart.');
-});
-
-/* ---------------------------
-  Product VIEW modal (details + gallery)
-   --------------------------- */
-const viewBackdrop = document.getElementById('viewBackdrop');
-const viewImageEl = document.getElementById('viewImage');
-const viewThumbs = document.getElementById('viewThumbs');
-const viewTitle = document.getElementById('viewName');
-const viewDesc = document.getElementById('viewDesc');
-const viewPrice = document.getElementById('viewPrice');
-const viewLoc = document.getElementById('viewLoc');
-const viewQty = document.getElementById('viewQty');
-let viewCurrentProduct = null;
-let viewCurrentIndex = 0;
-
-function openViewModal(product){
-  viewCurrentProduct = product;
-  viewCurrentIndex = 0;
-  viewTitle.textContent = product.title;
-  viewDesc.textContent = product.desc;
-  viewPrice.textContent = '₦' + Number(product.price).toLocaleString();
-  viewLoc.textContent = product.loc + ' • ' + product.qty + ' pcs';
-  viewQty.value = 1;
-  renderViewGallery(product.images);
-  viewImageEl.src = product.images[0];
-  viewBackdrop.style.display = 'flex';
-  viewBackdrop.setAttribute('aria-hidden','false');
-}
-
-function renderViewGallery(images){
-  viewThumbs.innerHTML = '';
-  images.forEach((src, i)=>{
-    const thumb = document.createElement('div');
-    thumb.className = 'view-thumb' + (i===0 ? ' active' : '');
-    thumb.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:cover" alt="thumb">`;
-    thumb.addEventListener('click', ()=> {
-      viewCurrentIndex = i;
-      viewImageEl.src = images[i];
-      Array.from(viewThumbs.children).forEach(c=>c.classList.remove('active'));
-      thumb.classList.add('active');
-    });
-    viewThumbs.appendChild(thumb);
-  });
-}
-
-document.getElementById('closeView').addEventListener('click', ()=> {
-  viewBackdrop.style.display='none';
-  viewBackdrop.setAttribute('aria-hidden','true');
-});
-document.getElementById('viewAdd').addEventListener('click', ()=>{
-  if(!viewCurrentProduct) return;
-  const q = Math.max(1, Math.min(viewCurrentProduct.qty, parseInt(viewQty.value || '1')));
-  addToCart(viewCurrentProduct, q, false);
-  renderCart(); // update totals & button
-  showToast('Added to cart');
-});
-
-/* ---------------------------
-  Drawer open/close + links (unchanged)
-   --------------------------- */
-const drawer = document.getElementById('drawer');
-const backdrop = document.getElementById('drawerBackdrop');
-document.getElementById('profileIcon').addEventListener('click', ()=> openDrawer());
-document.getElementById('hambBtn').addEventListener('click', ()=> openDrawer());
-document.getElementById('drawerClose').addEventListener('click', ()=> closeDrawer());
-backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeDrawer(); });
-
-function openDrawer(){ drawer.classList.add('open'); backdrop.style.display='block'; drawer.setAttribute('aria-hidden','false'); }
-function closeDrawer(){ drawer.classList.remove('open'); backdrop.style.display='none'; drawer.setAttribute('aria-hidden','true'); }
-
-/* quick link behaviors */
-document.getElementById('linkSell').addEventListener('click', (e)=>{ closeDrawer(); window.location.href = 'sell.html'; });
-document.getElementById('linkAds').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); window.location.href = 'ads.html'; });
-document.getElementById('linkProfile').addEventListener('click', (e)=>{ e.preventDefault(); closeDrawer(); openDrawer(); });
-
-/* ---------------------------
-  Bank modal: POST to /api/users/:id/bank (backend route you provided)
-   --------------------------- */
-const bankBackdrop = document.getElementById('bankBackdrop');
-document.getElementById('linkBank').addEventListener('click', (e)=>{ e.preventDefault(); openBankModal(); });
-document.getElementById('bankCancel').addEventListener('click', ()=> { bankBackdrop.style.display='none'; bankBackdrop.setAttribute('aria-hidden','true'); });
-
-document.getElementById('bankSave').addEventListener('click', async ()=>{
-  const name = document.getElementById('bankAccountName').value.trim();
-  const number = document.getElementById('bankAccountNumber').value.trim();
-  const bname = document.getElementById('bankName').value.trim();
-  const bcode = document.getElementById('bankCode').value.trim();
-
-  if(!name || !number || !bname){
-    showToast('Please complete account name, number & bank name');
-    return;
-  }
-
-  const u = readUser() || {};
-  const acct = { account_number: String(number), bank_code: String(bcode || ''), name: String(name) };
-
-  // store local copy
-  u.account_details = Object.assign({}, u.account_details || {}, acct);
-  writeUser(u);
-  showToast('Bank details saved locally');
-
-  // persist to backend: POST /api/users/:id/bank (preferred), fallback to PATCH /api/users/:id
-  if(u && u.id){
-    let ok = false;
-    try {
-      // preferred route: POST /api/users/:id/bank
-      const res = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}/bank`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        credentials: 'include',
-        body: JSON.stringify({ account_number: number, bank_code: bcode, name })
-      }).catch(()=>null);
-      if (res && res.ok) ok = true;
-    } catch(e){}
-
-    if(!ok){
-      try {
-        const res2 = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(u.id)}`, {
-          method:'PATCH',
-          headers:{ 'Content-Type':'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ account_details: acct })
-        }).catch(()=>null);
-        if (res2 && res2.ok) ok = true;
-      } catch(e){}
-    }
-
-    if(ok) showToast('Bank details saved to server');
-    else showToast('Saved locally; server endpoint not available');
-  }
-
-  bankBackdrop.style.display='none';
-  bankBackdrop.setAttribute('aria-hidden','true');
-});
-
-function openBankModal(){
-  const u = readUser() || {};
-  const acct = (u && u.account_details) ? u.account_details : {};
-  document.getElementById('bankAccountName').value = acct.account_name || acct.name || '';
-  document.getElementById('bankAccountNumber').value = acct.account_number || acct.accountNumber || '';
-  document.getElementById('bankName').value = acct.bank_name || acct.bank || '';
-  document.getElementById('bankCode').value = acct.bank_code || acct.bank_code || '';
-  bankBackdrop.style.display='flex';
-  bankBackdrop.setAttribute('aria-hidden','false');
-  closeDrawer();
-}
-
-/* ---------------------------
-  Notifications / Orders polling (best-effort)
-   - Poll /api/my/orders?user_id=... to count active orders
-   - update navMessages badge if any pending/uncompleted orders
-   --------------------------- */
-async function pollOrderNotifications(){
-  const u = readUser();
-  if (!u || !u.id) return;
-  try {
-    // try /api/my/orders first
-    const res = await fetch(`${BACKEND_BASE}/api/my/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' });
-    if (!res.ok) {
-      // fallback to /api/orders?user_id=
-      const r2 = await fetch(`${BACKEND_BASE}/api/orders?user_id=${encodeURIComponent(u.id)}`, { credentials: 'include' }).catch(()=>null);
-      if (!r2 || !r2.ok) {
-        // endpoint missing — nothing to do
-        return;
-      }
-      const j2 = await r2.json().catch(()=>null);
-      if (j2 && j2.success && Array.isArray(j2.orders)) updateOrderBadge(j2.orders);
-      else if (Array.isArray(j2)) updateOrderBadge(j2);
-      return;
-    }
-    const j = await res.json().catch(()=>null);
-    if (j && j.success && Array.isArray(j.orders)) updateOrderBadge(j.orders);
-    else if (Array.isArray(j)) updateOrderBadge(j);
-  } catch(e){}
-}
-function updateOrderBadge(orders){
-  const navMessages = document.getElementById('navMessages');
-  if (!navMessages) return;
-  const pending = orders.filter(o => !['completed','released','cancelled'].includes((o.status||'').toLowerCase()));
-  // add small badge if pending.length > 0
-  if (pending.length) {
-    navMessages.classList.add('has-orders');
-    navMessages.setAttribute('title', `${pending.length} active order(s)`);
-    // show a little numeric badge
-    let b = navMessages.querySelector('.order-badge');
-    if (!b) {
-      b = document.createElement('div');
-      b.className = 'order-badge';
-      b.style.position = 'absolute';
-      b.style.top = '6px';
-      b.style.right = '8px';
-      b.style.background = 'red';
-      b.style.color = '#fff';
-      b.style.padding = '2px 6px';
-      b.style.borderRadius = '999px';
-      b.style.fontSize = '11px';
-      b.style.fontWeight = '800';
-      navMessages.appendChild(b);
-    }
-    b.textContent = pending.length;
-  } else {
-    navMessages.classList.remove('has-orders');
-    const b = navMessages.querySelector('.order-badge');
-    if (b) b.remove();
-  }
-}
-
-// poll every 15s
-setInterval(()=>{ pollOrderNotifications(); }, 15000);
-
-/* ---------------------------
-  Utilities & init
-   --------------------------- */
-function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/[&<>"']/g, m=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function showToast(msg, ms=2200){ const t = document.getElementById('toast'); t.textContent = msg; t.style.display='block'; clearTimeout(showToast._t); showToast._t = setTimeout(()=> t.style.display='none', ms); }
-
-/* initial load */
-(async function init(){
-  setAvatarFromUser();
-  refreshUserFromServer();
-  initialAndPollAds(); // fetch backend ads + set up polling every 10s
-  renderCart();
-  renderProducts();
-  renderCart();
-  pollOrderNotifications();
-})();
-</script>
 </body>
 </html>
