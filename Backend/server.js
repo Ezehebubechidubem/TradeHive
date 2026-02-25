@@ -923,36 +923,34 @@ app.post('/api/ads/:id/buy', async (req, res) => {
 
   if (!buyer_id) return res.status(400).json({ success:false, message:'buyer_id required' });
 
-  // helper: escrow tiers
-  function computeEscrow(totalNaira) {
-    if (totalNaira <= 10000) return 1000;
-    if (totalNaira <= 50000) return 2500;
-    if (totalNaira <= 100000) return 4500;
-    if (totalNaira <= 500000) return 5500;
-    if (totalNaira <= 1000000) return 7500;
-    return 9500;
+  // escrow policy: 3% of subtotal (rounded to nearest naira)
+  function computeEscrowPercent(subtotalNaira) {
+    const percent = 0.03; // 3%
+    const raw = subtotalNaira * percent;
+    return Math.round(raw);
   }
 
   const client = await pool.connect();
   try {
     // Idempotency check (same logic used elsewhere)
     if (idempotency_key) {
-      const existing = (await client.query("SELECT p.* FROM payments p WHERE p.meta->>'idempotency_key' = $1 LIMIT 1", [idempotency_key])).rows[0];
+      const existing = (await client.query(
+        "SELECT p.* FROM payments p WHERE p.meta->>'idempotency_key' = $1 LIMIT 1",
+        [idempotency_key]
+      )).rows[0];
       if (existing) return res.json({ success:true, paymentId: existing.id, note:'idempotent-return', meta: existing.meta });
     }
 
-    // If an items array is present -> perform combined checkout
+    // Combined checkout: items array present
     if (Array.isArray(items) && items.length > 0) {
       // items: [{ ad_id, qty }]
-      // Validate ad ids
       const adIds = items.map(i => String(i.ad_id));
-      // build placeholders
       const placeholders = adIds.map((_, idx) => `$${idx+1}`).join(',');
       const adsQ = await client.query(`SELECT * FROM ads WHERE id IN (${placeholders})`, adIds);
       const adsById = {};
       adsQ.rows.forEach(a => { adsById[String(a.id)] = a; });
 
-      // ensure all exist
+      // validate
       for (const it of items) {
         if (!adsById[String(it.ad_id)]) {
           return res.status(404).json({ success:false, message:`ad-not-found:${it.ad_id}` });
@@ -961,8 +959,8 @@ app.post('/api/ads/:id/buy', async (req, res) => {
         if (qn <= 0) return res.status(400).json({ success:false, message:`invalid-qty-for:${it.ad_id}` });
       }
 
-      // Begin transaction
       await client.query('BEGIN');
+
       const createdOrderIds = [];
       let subtotal = 0;
       const perSeller = {}; // seller_id => { items: [], total }
@@ -986,11 +984,22 @@ app.post('/api/ads/:id/buy', async (req, res) => {
         perSeller[sId].total += amount;
       }
 
-      // compute escrow and final amount
-      const escrow = computeEscrow(subtotal);
+      // compute escrow (platform keeps this; not paid to sellers)
+      const escrow = computeEscrowPercent(subtotal);
       const finalAmount = subtotal + escrow;
 
-      // create single payment row (link to first order for compatibility)
+      // Build seller_payouts mapping (sellers receive only their items' total — escrow is NOT included)
+      const seller_payouts = {};
+      Object.keys(perSeller).forEach(sId => {
+        seller_payouts[sId] = {
+          seller_id: sId,
+          items_count: perSeller[sId].items.length,
+          subtotal: perSeller[sId].total,
+          payout_due: perSeller[sId].total // escrow is not included here
+        };
+      });
+
+      // create single payment row (combined)
       const primaryOrder = createdOrderIds[0] || null;
       const paymentId = uid();
       const tx_ref = 'th_checkout_' + uid() + '_' + Date.now();
@@ -999,7 +1008,9 @@ app.post('/api/ads/:id/buy', async (req, res) => {
         order_ids: createdOrderIds,
         subtotal,
         escrow,
+        escrow_percent: 3,
         total: finalAmount,
+        seller_payouts,           // <-- important: mapping for downstream payout logic
         idempotency_key: idempotency_key || null,
         tx_ref
       };
@@ -1024,15 +1035,15 @@ app.post('/api/ads/:id/buy', async (req, res) => {
 
       if (initResp && (initResp.data || initResp.session)) {
         const prov = initResp.data || initResp.session;
-        await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
+        await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2',
+          [JSON.stringify({ provider_init: prov }), paymentId]);
         const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
         if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
       }
 
-      // Commit transaction before notifications
       await client.query('COMMIT');
 
-      // Notify sellers (best-effort async)
+      // Notify sellers (best-effort async). Note we explicitly show payout_due (excludes escrow).
       (async function notify() {
         try {
           const sellerIds = Object.keys(perSeller);
@@ -1040,7 +1051,7 @@ app.post('/api/ads/:id/buy', async (req, res) => {
             const summary = perSeller[sId];
             const r = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [sId]);
             const seller = r.rows[0];
-            // build simple email text
+
             const lines = [];
             lines.push(`Hello ${seller && (seller.fullname || seller.username) ? (seller.fullname || seller.username) : 'Seller'},`);
             lines.push('');
@@ -1050,9 +1061,10 @@ app.post('/api/ads/:id/buy', async (req, res) => {
               lines.push(`- ${it.qty} × ad ${it.ad_id} (${it.title || 'item'}) — ₦${Number(it.amount).toLocaleString()} (order: ${it.orderId})`);
             });
             lines.push('');
-            lines.push(`Total for you: ₦${Number(summary.total).toLocaleString()}`);
+            lines.push(`Total for you (payout amount): ₦${Number(summary.total).toLocaleString()}`);
             lines.push('');
-            lines.push('You will be paid after buyer confirmation and settlement. Please prepare to fulfill the order.');
+            lines.push('Note: The escrow fee (charged to the buyer) is retained by the platform and will NOT be paid to sellers.');
+            lines.push('You will be paid the item total after buyer confirmation and settlement. Please prepare to fulfill the order.');
             const text = lines.join('\n');
 
             if (seller && seller.email) {
@@ -1065,42 +1077,72 @@ app.post('/api/ads/:id/buy', async (req, res) => {
         }
       })();
 
-      // Return combined payment init info
       return res.json({ success:true, paymentId, orderIds: createdOrderIds, meta: metaObj, init: initResp });
     }
 
     // ---- FALLBACK: single-ad purchase (original behavior, preserved) ----
-    // Validate ad exists
     const adRes = (await client.query('SELECT * FROM ads WHERE id=$1 LIMIT 1', [adId])).rows[0];
     if (!adRes) return res.status(404).json({ success:false, message:'ad-not-found' });
 
     const amount = Number(adRes.price) * Number(qty);
-    const orderId = uid();
 
     await client.query('BEGIN');
 
+    const orderId = uid();
     await client.query(
       'INSERT INTO orders (id, ad_id, buyer_id, seller_id, qty, amount, currency, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
       [orderId, adId, buyer_id, adRes.seller_id, qty, amount, adRes.currency || 'NGN', 'pending_payment']
     );
 
+    // compute escrow (3%) for single purchase and finalAmountSingle
+    const escrowSingle = computeEscrowPercent(amount);
+    const finalAmountSingle = amount + escrowSingle;
+
+    // seller_payout for single purchase: seller gets item amount (escrow NOT included)
+    const seller_payouts_single = {};
+    seller_payouts_single[String(adRes.seller_id)] = {
+      seller_id: String(adRes.seller_id),
+      items_count: 1,
+      subtotal: amount,
+      payout_due: amount
+    };
+
     const paymentId = uid();
     const tx_ref = 'th_order_' + uid() + '_' + Date.now();
-    const metaObj = { type:'order', orderId, paymentId, idempotency_key: idempotency_key || null, tx_ref };
+    const metaObj = {
+      type:'order',
+      orderId,
+      paymentId,
+      subtotal: amount,
+      escrow: escrowSingle,
+      escrow_percent: 3,
+      total: finalAmountSingle,
+      seller_payouts: seller_payouts_single,
+      idempotency_key: idempotency_key || null,
+      tx_ref
+    };
 
     await client.query(
       'INSERT INTO payments (id, order_id, ad_id, user_id, provider, amount, currency, status, reference, meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      [paymentId, orderId, adId, buyer_id, PAYMENT_PROVIDER, amount, adRes.currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]
+      [paymentId, orderId, adId, buyer_id, PAYMENT_PROVIDER, finalAmountSingle, adRes.currency || 'NGN', 'initiated', tx_ref, JSON.stringify(metaObj)]
     );
 
     const buyerEmailRow = (await client.query('SELECT email FROM users WHERE id=$1 LIMIT 1', [buyer_id])).rows[0];
     const email = buyerEmailRow ? buyerEmailRow.email : `buyer_${buyer_id}@example.com`;
     const callback = (process.env.CALLBACK_BASE_URL || '') + '/pay/order-callback';
-    const initResp = await initializePayment({ provider: PAYMENT_PROVIDER, email, amount, metadata: { ...metaObj, email }, currency: adRes.currency || 'NGN', callback_url: callback });
+    const initResp = await initializePayment({
+      provider: PAYMENT_PROVIDER,
+      email,
+      amount: finalAmountSingle,
+      metadata: { ...metaObj, email },
+      currency: adRes.currency || 'NGN',
+      callback_url: callback
+    });
 
     if (initResp && (initResp.data || initResp.session)) {
       const prov = initResp.data || initResp.session;
-      await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2', [JSON.stringify({ provider_init: prov }), paymentId]);
+      await client.query('UPDATE payments SET meta = coalesce(meta, \'{}\'::jsonb) || $1 WHERE id=$2',
+        [JSON.stringify({ provider_init: prov }), paymentId]);
       const provRef = prov.reference || prov.id || prov.access_code || prov.authorization_url || prov.link || null;
       if (provRef) await client.query('UPDATE payments SET reference=$1 WHERE id=$2', [String(provRef), paymentId]);
     }
@@ -1118,6 +1160,12 @@ app.post('/api/ads/:id/buy', async (req, res) => {
         lines.push(`A buyer (id: ${buyer_id}) placed an order for your ad ${adId} (${adRes.title || ''}).`);
         lines.push('');
         lines.push(`${qty} × ₦${Number(adRes.price).toLocaleString()} — Order id: ${orderId}`);
+        lines.push('');
+        lines.push(`Subtotal: ₦${Number(amount).toLocaleString()}`);
+        lines.push(`Escrow (3%): ₦${Number(escrowSingle).toLocaleString()}`);
+        lines.push(`Total charged to buyer: ₦${Number(finalAmountSingle).toLocaleString()}`);
+        lines.push('');
+        lines.push(`Your payout (what you'll receive) will be: ₦${Number(amount).toLocaleString()} (escrow is NOT included).`);
         lines.push('');
         lines.push('Please prepare to fulfill the order. You will be paid after buyer confirmation and settlement.');
         const text = lines.join('\n');
@@ -1140,7 +1188,6 @@ app.post('/api/ads/:id/buy', async (req, res) => {
     client.release();
   }
 });
-
 /////////////////////////////////////////////////////////////////////
 // VERIFY & CALLBACK HANDLER (robust + safe)
 // Replaces earlier fragile version. Accepts req,res directly.
